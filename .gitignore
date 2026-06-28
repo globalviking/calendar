@@ -1,0 +1,46 @@
+# Hermes Agent state
+state.db
+state.db-wal
+state.db-shm
+state.db-journal
+gateway_state.json
+channel_directory.json
+rich_sent_index.json
+
+# Sessions & memory
+sessions/
+memories/
+
+# Cron
+cron/
+
+# Logs
+logs/
+
+# Skills (managed by Hermes)
+skills/
+
+# Config & env (contains secrets)
+config.yaml
+.env
+*.env
+
+# State snapshots
+state-snapshots/
+
+# Home directory (contains gh credentials, etc.)
+home/
+
+# Local binaries
+.local/
+
+# Profiles
+profiles/
+
+# Misc
+*.log
+*.jsonl
+*.lock
+.DS_Store
+__pycache__/
+*.pyc
