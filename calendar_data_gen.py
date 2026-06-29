@@ -9,6 +9,7 @@ Usage: python3 calendar_data_gen.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [-o 
 """
 
 import argparse
+import json
 import math
 import sys
 from datetime import date, timedelta
@@ -1897,6 +1898,8 @@ def main():
                         help="Output all calendar systems (default: compact 7-field output)")
     parser.add_argument("--main-cycles", action="store_true", default=False,
                         help="Output only the main cycle fields: 7-day(Planet), 10-day(Decan), 13-day(Wavespell), 12-month(Zodiac+Atlantean), 13-month(13Moon), Moon phase")
+    parser.add_argument("--json", action="store_true", default=False,
+                        help="Output as JSON array (works with --main-cycles, --full, or compact)")
     parser.add_argument("--today", action="store_true", default=False,
                         help="Output only today's date (overrides --start/--end)")
     args = parser.parse_args()
@@ -1914,15 +1917,17 @@ def main():
     else:
         out = sys.stdout
 
-    # Header
-    out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
-    if args.main_cycles:
-        out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
-    elif args.full:
-        out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
-    else:
-        out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
+    # Header (skip for JSON — output is structured)
+    if not args.json:
+        out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
+        if args.main_cycles:
+            out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
+        elif args.full:
+            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
+        else:
+            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
 
+    json_results = []
     current = start
     count = 0
     while current <= end:
@@ -2041,11 +2046,90 @@ def main():
 
         parts.append(flags_field)
 
-        line = " | ".join(parts)
-        out.write(line + "\n")
+        if args.json:
+            # Build structured JSON object
+            entry = {"date": current.isoformat()}
+            if args.main_cycles:
+                # Parse weekday field: "Monday/Moon 2026-06-29"
+                wd_parts = wd_field.split(" ")
+                entry["weekday"] = wd_parts[0].split("/")[0]
+                entry["planetary_ruler"] = wd_parts[0].split("/")[1]
+                entry["7day"] = {"planet": planet_ruler, "symbol": planet_sym}
+                entry["10day_decan"] = decan
+                entry["13day_wavespell"] = wavespell
+                if is_dot:
+                    entry["12month_zodiac"] = "---"
+                    entry["12month_atlantean"] = "DOT"
+                else:
+                    entry["12month_zodiac"] = {
+                        "month": z_sign_idx + 1,
+                        "sign": z_sign_name,
+                        "symbol": z_sign_sym,
+                        "element": z_elem,
+                        "ruler": z_ruler,
+                        "ruler_symbol": z_ruler_sym,
+                    }
+                    entry["12month_atlantean"] = {
+                        "month": atl_month_num,
+                        "day_in_month": atl_day_in_month,
+                        "constellation": atl_const,
+                        "symbol": atl_const_sym,
+                        "body": atl_body,
+                    }
+                if moon_day_num > 364:
+                    entry["13month_moon"] = {"dot": True, "tone": "Cosmic", "power": "Presence"}
+                else:
+                    entry["13month_moon"] = {
+                        "month": m13_month,
+                        "day_in_month": m13_day_in,
+                        "tone": m13_tone_name,
+                        "power": m13_power,
+                        "action": m13_action,
+                    }
+                # Parse moon phase: "Moon:WaxGib(97%)"
+                mp = moon_phase.replace("Moon:", "")
+                mp_phase = mp.split("(")[0]
+                mp_illum = mp.split("(")[1].replace(")", "").replace("%", "")
+                entry["moon_phase"] = {"phase": mp_phase, "illumination_pct": int(mp_illum)}
+                entry["flags"] = flags if flags else []
+            else:
+                # Compact or full — use field strings
+                entry["weekday"] = wd_field
+                entry["atlantean"] = atl_field
+                entry["zodiac"] = zod
+                entry["season"] = season
+                entry["13moon"] = moon13
+                entry["moon_phase"] = moon_phase
+                if args.full:
+                    entry["nine_star_ki"] = nine_sk
+                    entry["sexagenary"] = sex
+                    entry["alkhemia"] = alk_result
+                    entry["vedic"] = vedic
+                    entry["chinese_lunar"] = chinese
+                    entry["hebrew"] = hebrew
+                    entry["mayan"] = mayan
+                    entry["celtic"] = celtic
+                    entry["islamic"] = islamic
+                    entry["aztec"] = aztec
+                    entry["persian"] = persian
+                    entry["egyptian"] = egyptian
+                    entry["hindu"] = hindu
+                    entry["javanese"] = javanese
+                    entry["saka_india"] = saka_india
+                    entry["saka_bali"] = saka_bali
+                    entry["decan"] = decan if args.full or args.main_cycles else None
+                    entry["wavespell"] = wavespell if args.full or args.main_cycles else None
+                entry["flags"] = flags if flags else []
+            json_results.append(entry)
+        else:
+            line = " | ".join(parts)
+            out.write(line + "\n")
 
         current = current + timedelta(days=1)
         count = count + 1
+
+    if args.json:
+        out.write(json.dumps(json_results, ensure_ascii=False, indent=2) + "\n")
 
     if args.output:
         out.close()
