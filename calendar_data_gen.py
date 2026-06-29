@@ -1895,8 +1895,8 @@ def main():
                         help="Hemisphere for seasons: north, south, or both (default: south)")
     parser.add_argument("--full", action="store_true", default=False,
                         help="Output all calendar systems (default: compact 7-field output)")
-    parser.add_argument("--cycles", action="store_true", default=False,
-                        help="Output only the 5 cycle fields: 7-day(Planet), 10-day(Decan), 13-day(Wavespell), 12-month(Zodiac), 13-month(13Moon)")
+    parser.add_argument("--main-cycles", action="store_true", default=False,
+                        help="Output only the main cycle fields: 7-day(Planet), 10-day(Decan), 13-day(Wavespell), 12-month(Zodiac+Atlantean), 13-month(13Moon), Moon phase")
     parser.add_argument("--today", action="store_true", default=False,
                         help="Output only today's date (overrides --start/--end)")
     args = parser.parse_args()
@@ -1916,8 +1916,8 @@ def main():
 
     # Header
     out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
-    if args.cycles:
-        out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Flags\n")
+    if args.main_cycles:
+        out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
     elif args.full:
         out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
     else:
@@ -1957,8 +1957,8 @@ def main():
         # Compact fields (always output)
         parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
-        if args.cycles:
-            # Cycles mode: 7-day, 10-day, 13-day, 12-month(x2: Zodiac+Atlantean), 13-month
+        if args.main_cycles:
+            # Main-cycles mode: 7-day, 10-day, 13-day, 12-month(x2: Zodiac+Atlantean), 13-month, Moon
             decan = compute_decan(current, is_dot)
             wavespell = compute_wavespell(current)
             # 7-day: planetary ruler
@@ -2017,7 +2017,7 @@ def main():
                 m13_action = m13_tone[2]
                 moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/" + m13_tone_name + "/" + m13_power + "/" + m13_action
 
-            parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month]
+            parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase]
 
         if args.full:
             nine_sk = compute_nine_star_ki(current.year)
