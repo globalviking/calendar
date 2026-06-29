@@ -410,6 +410,90 @@ CELTIC_TREE_ABBR = [
 # NamelessDay: Dec 23
 
 # ============================================================
+# Decan constants (36 decans — 3 per zodiac sign, each ~10 days)
+# ============================================================
+
+# Chaldean planetary rulers for the 36 decans, in order from Aries I through Pisces III.
+# The Chaldean order cycles: Mars, Sun, Venus, Mercury, Moon, Saturn, Jupiter (repeating).
+DECAN_CHALDEAN_RULERS = [
+    "Mars", "Sun", "Venus",           # Aries I, II, III
+    "Mercury", "Moon", "Saturn",      # Taurus I, II, III
+    "Jupiter", "Mars", "Mercury",     # Gemini I, II, III
+    "Moon", "Venus", "Saturn",        # Cancer I, II, III
+    "Jupiter", "Mars", "Sun",         # Leo I, II, III
+    "Mercury", "Venus", "Moon",       # Virgo I, II, III
+    "Saturn", "Jupiter", "Mars",      # Libra I, II, III
+    "Sun", "Venus", "Mercury",        # Scorpio I, II, III
+    "Moon", "Saturn", "Jupiter",      # Sagittarius I, II, III
+    "Mars", "Mercury", "Sun",         # Capricorn I, II, III
+    "Venus", "Moon", "Saturn",        # Aquarius I, II, III
+    "Jupiter", "Mars", "Mercury",     # Pisces I, II, III
+]
+
+# Triplicity rulers (traditional Dorothean) — each element uses the same 3 planetary rulers
+# across all 3 decans of all signs of that element.
+# Fire (Aries, Leo, Sagittarius): Mars, Sun, Jupiter
+# Earth (Taurus, Virgo, Capricorn): Venus, Moon, Saturn
+# Air (Gemini, Libra, Aquarius): Saturn, Mercury, Jupiter
+# Water (Cancer, Scorpio, Pisces): Venus, Mars, Moon
+DECAN_TRIPLICITY_RULERS = {
+    "Fire": ["Mars", "Sun", "Jupiter"],
+    "Earth": ["Venus", "Moon", "Saturn"],
+    "Air": ["Saturn", "Mercury", "Jupiter"],
+    "Water": ["Venus", "Mars", "Moon"],
+}
+
+# Decan names (Egyptian/Greek tradition) — 36 names for the 36 decans
+DECAN_NAMES = [
+    # Aries
+    "Atep", "Khenku", "Asar",
+    # Taurus
+    "Asikha", "Tepi", "Kheru",
+    # Gemini
+    "Amsek", "Sekha", "Khem",
+    # Cancer
+    "Hapi", "Hapit", "Nephthys",
+    # Leo
+    "Sekhmet", "Tefnut", "Bast",
+    # Virgo
+    "Isis", "Nephthys", "Hapi",
+    # Libra
+    "Maat", "Khepri", "Shu",
+    # Scorpio
+    "Khepesh", "Sekhmet", "Serqet",
+    # Sagittarius
+    "Neith", "Satis", "Anuket",
+    # Capricorn
+    "Khnum", "Heket", "Geb",
+    # Aquarius
+    "Nut", "Tefnut", "Shu",
+    # Pisces
+    "Sobek", "Hatmehit", "Taweret",
+]
+
+# ============================================================
+# Dreamspell / 13-Moon Wavespell constants (13 Galactic Tones)
+# ============================================================
+
+# 13 Galactic Tones of Creation (Dreamspell tradition)
+# Each tone has a name, a creative power, and an action
+GALACTIC_TONES = [
+    ("Magnetic", "Purpose", "Unify"),
+    ("Lunar", "Challenge", "Polarize"),
+    ("Electric", "Service", "Activate"),
+    ("SelfExist", "Form", "Define"),
+    ("Overtone", "Radiance", "Empower"),
+    ("Rhythmic", "Equality", "Organize"),
+    ("Resonant", "Attunement", "Channel"),
+    ("Galactic", "Integrity", "Harmonize"),
+    ("Solar", "Intention", "Pulse"),
+    ("Planetary", "Manifestation", "Perfect"),
+    ("Spectral", "Liberation", "Dissolve"),
+    ("Crystal", "Cooperation", "Dedicate"),
+    ("Cosmic", "Presence", "Endure"),
+]
+
+# ============================================================
 # Islamic Hijri Calendar constants
 # ============================================================
 
@@ -804,6 +888,129 @@ def compute_holi_nada(d):
     if d in HOLI_NADA:
         return HOLI_NADA[d]
     return None
+
+
+# ============================================================
+# Decan (10-day cycle) — 36 decans, 3 per zodiac sign
+# ============================================================
+
+def compute_decan(d, is_dot):
+    """Compute the Hellenistic/Egyptian decan for date d.
+
+    Each zodiac sign (30 degrees) is divided into 3 decans of 10 degrees each.
+    The decan is determined by the sun's tropical longitude within the current sign.
+    Shows both the Chaldean ruler and the triplicity (Dorothean) ruler.
+
+    Format: Dec:SignNum/DecanName/ChaldeanRuler+TriplicityRuler
+    e.g. Dec:Cancer2/Sekhmet/Mars+Venus
+    """
+    if is_dot:
+        return "Dec:---"
+
+    jd = to_julian_day(d)
+    t = (jd - 2451545.0) / 36525.0
+    # Mean solar longitude (tropical) in degrees
+    l0_sun = 280.460 + 36000.770 * t
+    # Mean anomaly
+    m_sun = 357.528 + 35999.050 * t
+    m_sun_rad = math.radians(m_sun)
+    # Equation of center correction
+    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
+    sun_tropical = (l0_sun + c_sun) % 360.0
+
+    # Sign index 0-11 (Aries=0, ..., Pisces=11)
+    sign_idx = int(sun_tropical // 30.0) % 12
+    sign_name = TROPICAL_ZODIAC_SIGNS[sign_idx]
+    sign_sym = TROPICAL_ZODIAC_SYMBOLS[sign_idx]
+
+    # Degree within sign (0-29.99...)
+    degree_in_sign = sun_tropical % 30.0
+    # Decan within sign (0, 1, 2) — each 10 degrees
+    decan_in_sign = int(degree_in_sign // 10.0)
+
+    # Global decan index (0-35)
+    decan_idx = sign_idx * 3 + decan_in_sign
+
+    # Day within decan (1-10) — approximately 10 days per decan
+    # degree within decan (0-9.99...)
+    degree_in_decan = degree_in_sign % 10.0
+    day_in_decan = int(degree_in_decan) + 1
+
+    # Get rulers
+    chaldean_ruler = DECAN_CHALDEAN_RULERS[decan_idx]
+    sign_element = ZODIAC_ELEMENTS.get(sign_name, "---")
+    triplicity_rulers = DECAN_TRIPLICITY_RULERS.get(sign_element, ["---", "---", "---"])
+    triplicity_ruler = triplicity_rulers[decan_in_sign]
+
+    # Decan name
+    decan_name = DECAN_NAMES[decan_idx]
+
+    # Roman numeral for decan within sign (I, II, III)
+    decan_roman = ["I", "II", "III"][decan_in_sign]
+
+    return ("Dec:" + sign_name + sign_sym + decan_roman + "/" +
+            decan_name + "/d" + str(day_in_decan) + "/" +
+            chaldean_ruler + "+" + triplicity_ruler)
+
+
+# ============================================================
+# Wavespell (13-day cycle) — Dreamspell + Tzolkin trecena
+# ============================================================
+
+def compute_wavespell(d):
+    """Compute the 13-day wavespell energy for date d.
+
+    Shows both:
+    1. Dreamspell wavespell: derived from the 13-Moon calendar.
+       Each 28-day month contains 2 wavespells of 13 days + 2 extra days.
+       The 13 Galactic Tones (Magnetic through Cosmic) cycle within each wavespell.
+    2. Tzolkin trecena: the traditional Mayan 13-day period from the Tzolkin cycle.
+       Shows the trecena number (1-13) and the Tzolkin day name (nawal).
+
+    Format: Wav:DSTone/TrecenaNum+Nawal
+    e.g. Wav:Magnetic/1+Imix
+    """
+    # --- Dreamspell wavespell ---
+    # The 13-Moon year starts July 26. Each 28-day month has 2 wavespells:
+    # Days 1-13 = wavespell 1, Days 14-26 = wavespell 2, Days 27-28 = extra (tone 13 carries over)
+    # The tone cycles 1-13 continuously through the year.
+    new_year = date(d.year, 7, 26)
+    if d < new_year:
+        new_year = date(d.year - 1, 7, 26)
+    day_num = (d - new_year).days + 1
+
+    if day_num > 364:
+        # Day Out of Time (July 25) — tone 13 (Cosmic), last month (Cosmic13)
+        ds_tone_idx = 12  # 0-indexed = tone 13
+        ds_tone_name = GALACTIC_TONES[12][0]
+        ds_tone_power = GALACTIC_TONES[12][1]
+        ds_tone_action = GALACTIC_TONES[12][2]
+        month = 13  # Cosmic month
+        ws_in_month = 2  # second wavespell of the month
+    else:
+        # Tone cycles 1-13 continuously: day 1 = tone 1, day 14 = tone 1, etc.
+        ds_tone_num = ((day_num - 1) % 13) + 1  # 1-13
+        ds_tone_idx = ds_tone_num - 1  # 0-indexed
+        ds_tone_name = GALACTIC_TONES[ds_tone_idx][0]
+        ds_tone_power = GALACTIC_TONES[ds_tone_idx][1]
+        ds_tone_action = GALACTIC_TONES[ds_tone_idx][2]
+        # Which wavespell within the month (1 or 2)
+        month = ((day_num - 1) // 28) + 1
+        day_in_month = ((day_num - 1) % 28) + 1
+        ws_in_month = 1 if day_in_month <= 13 else 2
+
+    # --- Tzolkin trecena ---
+    # The trecena is the 13-day period in the Tzolkin. The trecena number
+    # is the Tzolkin number (1-13), and the nawal is the Tzolkin day name.
+    jd = to_julian_day(d)
+    days_since_creation = jd - MAYAN_CORRELATION_JD
+    tzolkin_num = ((days_since_creation + 3) % 13) + 1
+    tzolkin_name_idx = (days_since_creation + 19) % 20
+    tzolkin_name = MAYAN_TZOLKIN_NAMES[tzolkin_name_idx]
+
+    return ("Wav:" + ds_tone_name + str(ds_tone_idx + 1) + "/" +
+            ds_tone_power + "/" + ds_tone_action + " WS" + str(ws_in_month) + "M" + str(month) +
+            " Tz" + str(tzolkin_num) + "+" + tzolkin_name)
 
 
 # ============================================================
@@ -1681,6 +1888,8 @@ def main():
                         help="Hemisphere for seasons: north, south, or both (default: south)")
     parser.add_argument("--full", action="store_true", default=False,
                         help="Output all calendar systems (default: compact 7-field output)")
+    parser.add_argument("--cycles", action="store_true", default=False,
+                        help="Output only the 5 cycle fields: 7-day(Planet), 10-day(Decan), 13-day(Wavespell), 12-month(Zodiac), 13-month(13Moon)")
     parser.add_argument("--today", action="store_true", default=False,
                         help="Output only today's date (overrides --start/--end)")
     args = parser.parse_args()
@@ -1700,8 +1909,10 @@ def main():
 
     # Header
     out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
-    if args.full:
-        out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Flags\n")
+    if args.cycles:
+        out.write("# Format: Gregorian(Full/Planet date) | 7day:PlanetRuler | 10day:Decan(Chaldean+Triplicity) | 13day:Wavespell(Dreamspell+Tzolkin) | 12month:Zodiac | 13month:13Moon | Flags\n")
+    elif args.full:
+        out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
     else:
         out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
 
@@ -1739,6 +1950,16 @@ def main():
         # Compact fields (always output)
         parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
+        if args.cycles:
+            # Cycles mode: 7-day(planet), 10-day(decan), 13-day(wavespell), 12-month(zodiac), 13-month(13moon)
+            decan = compute_decan(current, is_dot)
+            wavespell = compute_wavespell(current)
+            # Extract planetary ruler from weekday field
+            planet_ruler = PLANETARY_RULERS[current.weekday()]
+            planet_sym = PLANETARY_SYMBOLS.get(planet_ruler, "")
+            seven_day = "7D:" + planet_ruler + planet_sym
+            parts = [wd_field, seven_day, decan, wavespell, zod, moon13]
+
         if args.full:
             nine_sk = compute_nine_star_ki(current.year)
             sex = compute_sexagenary(current.year)
@@ -1755,7 +1976,9 @@ def main():
             javanese = compute_javanese(current)
             saka_india = compute_saka_india(current)
             saka_bali = compute_saka_bali(current)
-            parts.extend([nine_sk, sex, alk_result, vedic, chinese, hebrew, mayan, celtic, islamic, aztec, persian, egyptian, hindu, javanese, saka_india, saka_bali])
+            decan = compute_decan(current, is_dot)
+            wavespell = compute_wavespell(current)
+            parts.extend([nine_sk, sex, alk_result, vedic, chinese, hebrew, mayan, celtic, islamic, aztec, persian, egyptian, hindu, javanese, saka_india, saka_bali, decan, wavespell])
 
         parts.append(flags_field)
 
