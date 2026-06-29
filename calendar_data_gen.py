@@ -97,6 +97,13 @@ ZODIAC_MODALITIES = {
     "Aries": "Cardinal", "Taurus": "Fixed", "Gemini": "Mutable", "Cancer": "Cardinal",
 }
 
+# Traditional planetary rulers for each zodiac sign (domicile rulers)
+ZODIAC_RULERS = {
+    "Aries": "Mars", "Taurus": "Venus", "Gemini": "Mercury", "Cancer": "Moon",
+    "Leo": "Sun", "Virgo": "Mercury", "Libra": "Venus", "Scorpio": "Mars",
+    "Sagittarius": "Jupiter", "Capricorn": "Saturn", "Aquarius": "Saturn", "Pisces": "Jupiter",
+}
+
 # ============================================================
 # 13-Moon Calendar constants
 # ============================================================
@@ -1910,7 +1917,7 @@ def main():
     # Header
     out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
     if args.cycles:
-        out.write("# Format: Gregorian(Full/Planet date) | 7day:PlanetRuler | 10day:Decan(Chaldean+Triplicity) | 13day:Wavespell(Dreamspell+Tzolkin) | 12month:Zodiac | 13month:13Moon | Flags\n")
+        out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Flags\n")
     elif args.full:
         out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
     else:
@@ -1951,14 +1958,66 @@ def main():
         parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
         if args.cycles:
-            # Cycles mode: 7-day(planet), 10-day(decan), 13-day(wavespell), 12-month(zodiac), 13-month(13moon)
+            # Cycles mode: 7-day, 10-day, 13-day, 12-month(x2: Zodiac+Atlantean), 13-month
             decan = compute_decan(current, is_dot)
             wavespell = compute_wavespell(current)
-            # Extract planetary ruler from weekday field
+            # 7-day: planetary ruler
             planet_ruler = PLANETARY_RULERS[current.weekday()]
             planet_sym = PLANETARY_SYMBOLS.get(planet_ruler, "")
             seven_day = "7D:" + planet_ruler + planet_sym
-            parts = [wd_field, seven_day, decan, wavespell, zod, moon13]
+
+            # 12-month: Zodiac month energy (sign + month num + ruling planet)
+            if is_dot:
+                zod_month = "12Z:---"
+            else:
+                jd_z = to_julian_day(current)
+                t_z = (jd_z - 2451545.0) / 36525.0
+                l0_z = 280.460 + 36000.770 * t_z
+                m_z = 357.528 + 35999.050 * t_z
+                m_z_rad = math.radians(m_z)
+                c_z = 1.915 * math.sin(m_z_rad) + 0.020 * math.sin(2 * m_z_rad)
+                sun_z = (l0_z + c_z) % 360.0
+                z_sign_idx = int(sun_z // 30.0) % 12
+                z_sign_name = TROPICAL_ZODIAC_SIGNS[z_sign_idx]
+                z_sign_sym = TROPICAL_ZODIAC_SYMBOLS[z_sign_idx]
+                z_ruler = ZODIAC_RULERS.get(z_sign_name, "---")
+                z_ruler_sym = PLANETARY_SYMBOLS.get(z_ruler, "")
+                z_elem = ZODIAC_ELEMENTS.get(z_sign_name, "---")
+                zod_month = "12Z:M" + str(z_sign_idx + 1) + "/" + z_sign_name + z_sign_sym + "/" + elem_emoji(z_elem) + "/" + z_ruler + z_ruler_sym
+
+            # 12-month: Atlantean month energy (constellation + month num + body + chakra)
+            if is_dot:
+                atl_month = "12A:DOT"
+            else:
+                atl_ny = date(current.year, 8, 4)
+                if current < atl_ny:
+                    atl_ny = date(current.year - 1, 8, 4)
+                atl_day_num = (current - atl_ny).days + 1
+                atl_month_num = ((atl_day_num - 1) // 30) + 1
+                atl_day_in_month = ((atl_day_num - 1) % 30) + 1
+                atl_const = ATLANTEAN_CONSTELLATIONS[atl_month_num - 1]
+                atl_const_sym = ATLANTEAN_CONSTELLATION_SYMBOLS[atl_month_num - 1]
+                atl_week_num = ((atl_day_in_month - 1) // 10) + 1
+                atl_body = ATLANTEAN_WEEK_BODIES[atl_week_num - 1]
+                atl_month = "12A:M" + str(atl_month_num) + "/d" + str(atl_day_in_month) + "/" + atl_const + atl_const_sym + "/" + atl_body
+
+            # 13-month: 13-Moon month energy (tone name + month num + power + action)
+            moon_ny = date(current.year, 7, 26)
+            if current < moon_ny:
+                moon_ny = date(current.year - 1, 7, 26)
+            moon_day_num = (current - moon_ny).days + 1
+            if moon_day_num > 364:
+                moon13_month = "13M:DOT/Cosmic/Presence"
+            else:
+                m13_month = ((moon_day_num - 1) // 28) + 1
+                m13_day_in = ((moon_day_num - 1) % 28) + 1
+                m13_tone = GALACTIC_TONES[m13_month - 1]
+                m13_tone_name = m13_tone[0]
+                m13_power = m13_tone[1]
+                m13_action = m13_tone[2]
+                moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/" + m13_tone_name + "/" + m13_power + "/" + m13_action
+
+            parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month]
 
         if args.full:
             nine_sk = compute_nine_star_ki(current.year)
