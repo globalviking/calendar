@@ -767,10 +767,9 @@ def compute_alkhemia(d):
         return ("Alk:---", False)
 
     elem_name = ALKHEMIA_ELEMENTS[cycle_num]
-    elem_abbrev = elem_name[:4]
     sign, chakra, verb = ALKHEMIA_13DAY[day_in_cycle]
 
-    result = "Alk:" + elem_abbrev + " d" + str(day_in_cycle) + "/" + sign + "/" + verb + "/" + chakra
+    result = "Alk:" + elem_name + " d" + str(day_in_cycle) + "/" + sign + "/" + verb + "/" + chakra
 
     is_eclipse = False
     if d in ALKHEMIA_ECLIPSES:
@@ -786,15 +785,15 @@ def compute_hol(d):
     day = d.day
 
     if (m == 3 and day >= 20) or (m == 4) or (m == 5) or (m == 6 and day <= 20):
-        return "Hol:HolPhyr/" + elem_emoji("Fire")
+        return "Hol:Hol-Phyr/" + elem_emoji("Fire")
     if (m == 6 and day >= 21) or (m == 7 and day <= 29):
-        return "Hol:HolWas/" + elem_emoji("Water")
+        return "Hol:Hol-Was/" + elem_emoji("Water")
     if (m == 7 and day >= 30) or (m == 8) or (m == 9 and day <= 21):
-        return "Hol:HolHah/" + elem_emoji("Eternal")
+        return "Hol:Hol-Hah/" + elem_emoji("Eternal")
     if (m == 9 and day >= 22) or (m == 10) or (m == 11) or (m == 12 and day <= 20):
-        return "Hol:HolHir/" + elem_emoji("Air")
+        return "Hol:Hol-Hir/" + elem_emoji("Air")
     if (m == 12 and day >= 21) or (m == 1) or (m == 2) or (m == 3 and day <= 19):
-        return "Hol:HolTum/" + elem_emoji("Earth")
+        return "Hol:Hol-Tum/" + elem_emoji("Earth")
 
     return "Hol:Unknown"
 
