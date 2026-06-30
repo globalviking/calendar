@@ -2,10 +2,11 @@
 """
 calendar_data_gen.py - Generate pre-computed daily calendar data for YOSOY framework.
 
-Computes 13 calendar systems for each day and outputs pipe-delimited data.
-Pure Python 3 standard library only.
+Computes 26+ calendar systems for each day and outputs pipe-delimited, JSON, or
+human-readable data. Uses PyEphem for accurate planetary positions (--astro mode).
 
 Usage: python3 calendar_data_gen.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [-o OUTPUT_FILE]
+       python3 calendar_data_gen.py --today [-H|--json|--full|--main-cycles|--astro]
 """
 
 import argparse
@@ -13,6 +14,14 @@ import json
 import math
 import sys
 from datetime import date, timedelta
+
+# PyEphem for accurate planetary positions (--astro mode)
+# Graceful fallback: if ephem is not installed, --astro mode is disabled
+try:
+    import ephem
+    HAS_EPHEM = True
+except ImportError:
+    HAS_EPHEM = False
 
 
 # ============================================================
@@ -842,6 +851,99 @@ def compute_moon_zodiac(d):
     sym = TROPICAL_ZODIAC_SYMBOLS[sign_idx]
 
     return abbr + sym
+
+
+# ============================================================
+# Astrology mode — planetary positions via PyEphem
+# ============================================================
+
+# Planet symbols and ephem classes
+ASTRO_PLANETS = [
+    ("Sun", "\u2609", ephem.Sun),
+    ("Moon", "\u263d", ephem.Moon),
+    ("Mercury", "\u263f", ephem.Mercury),
+    ("Venus", "\u2640", ephem.Venus),
+    ("Mars", "\u2642", ephem.Mars),
+    ("Jupiter", "\u2643", ephem.Jupiter),
+    ("Saturn", "\u2644", ephem.Saturn),
+]
+
+
+def _planet_ecliptic_lon(p, d):
+    """Compute ecliptic longitude in degrees for a planet on date d."""
+    obs = ephem.Observer()
+    obs.date = ephem.Date(d)
+    p.compute(obs)
+    return ephem.Ecliptic(p).lon * 180.0 / math.pi
+
+
+def compute_astro(d):
+    """Compute astrology data for date d using PyEphem.
+
+    Returns a dict with:
+      - 'planets': list of (name, symbol, sign_abbr, sign_sym, longitude, is_rx)
+      - 'conjunctions': list of "Conj(body1+body2)" strings
+      - 'rx_list': list of "Rx(symbol)" strings
+    """
+    if not HAS_EPHEM:
+        return {"planets": [], "conjunctions": [], "rx_list": []}
+
+    signs = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir",
+             "Lib", "Sco", "Sag", "Cap", "Aqu", "Pis"]
+    syms = ["\u2648", "\u2649", "\u264a", "\u264b", "\u264c", "\u264d",
+            "\u264e", "\u264f", "\u2650", "\u2651", "\u2652", "\u2653"]
+
+    # Compute all planet positions
+    longitudes = {}
+    planet_data = []
+    for name, sym, cls in ASTRO_PLANETS:
+        p = cls()
+        lon = _planet_ecliptic_lon(p, d)
+        longitudes[name] = lon
+        sign_idx = int(lon / 30.0) % 12
+        is_rx = False
+        # Check retrograde: compare with tomorrow's longitude
+        if name not in ("Sun", "Moon"):
+            p2 = cls()
+            tomorrow = d + timedelta(days=1)
+            lon2 = _planet_ecliptic_lon(p2, tomorrow)
+            diff = lon2 - lon
+            if diff > 180:
+                diff -= 360
+            if diff < -180:
+                diff += 360
+            is_rx = diff < 0
+        planet_data.append({
+            "name": name,
+            "symbol": sym,
+            "sign_abbr": signs[sign_idx],
+            "sign_sym": syms[sign_idx],
+            "longitude": lon,
+            "is_rx": is_rx,
+        })
+
+    # Check conjunctions (elongation < 1.5 degrees)
+    conjunctions = []
+    bodies = list(longitudes.keys())
+    for i in range(len(bodies)):
+        for j in range(i + 1, len(bodies)):
+            n1, n2 = bodies[i], bodies[j]
+            diff = abs(longitudes[n1] - longitudes[n2])
+            if diff > 180:
+                diff = 360 - diff
+            if diff < 1.5:
+                # Get symbols
+                s1 = next(s for nm, s, _ in ASTRO_PLANETS if nm == n1)
+                s2 = next(s for nm, s, _ in ASTRO_PLANETS if nm == n2)
+                conjunctions.append("Conj(" + s1 + s2 + ")")
+
+    # Build retrograde list
+    rx_list = []
+    for pd in planet_data:
+        if pd["is_rx"]:
+            rx_list.append("Rx(" + pd["symbol"] + ")")
+
+    return {"planets": planet_data, "conjunctions": conjunctions, "rx_list": rx_list}
 
 
 def compute_nine_star_ki(year):
@@ -2262,6 +2364,101 @@ def build_json_compact_or_full(current, args, wd_field, atl_field, zod, season, 
 
 
 # ============================================================
+# Astro mode computation + formatting
+# ============================================================
+
+def compute_astro_parts(current, wd_field, moon_phase, flags):
+    """Build the parts list for --astro mode.
+
+    Format: Wed(date) | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | Flags
+    Each planet field: 'Mercury☿:Can♋' or 'Mercury☿:Can♋ Rx'
+    Aspects field: 'Asp:Rx(☿) Rx(♄) Conj(☽♀)' or 'Asp:---'
+    """
+    astro = compute_astro(current)
+
+    parts = [wd_field]
+
+    for pd in astro["planets"]:
+        field = pd["name"] + pd["symbol"] + ":" + pd["sign_abbr"] + pd["sign_sym"]
+        if pd["is_rx"]:
+            field = field + " Rx"
+        parts.append(field)
+
+    # Aspects: combine retrograde + conjunctions
+    aspects = astro["rx_list"] + astro["conjunctions"]
+    if aspects:
+        aspects_field = "Asp:" + " ".join(aspects)
+    else:
+        aspects_field = "Asp:---"
+    parts.append(aspects_field)
+
+    parts.append(flags)
+
+    return parts, astro
+
+
+def build_json_astro(current, wd_field, astro, moon_phase, flags):
+    """Build a JSON entry dict for --astro mode."""
+    entry = {"date": current.isoformat()}
+    wd_parts = wd_field.split(" ")
+    entry["weekday"] = wd_parts[0].split("/")[0]
+    entry["planetary_ruler"] = wd_parts[0].split("/")[1]
+
+    entry["planets"] = []
+    for pd in astro["planets"]:
+        entry["planets"].append({
+            "name": pd["name"],
+            "symbol": pd["symbol"],
+            "sign": pd["sign_abbr"],
+            "symbol_zodiac": pd["sign_sym"],
+            "longitude_deg": round(pd["longitude"], 2),
+            "retrograde": pd["is_rx"],
+        })
+
+    entry["aspects"] = {
+        "retrograde": astro["rx_list"],
+        "conjunctions": astro["conjunctions"],
+    }
+    entry["moon_phase"] = moon_phase
+    entry["flags"] = flags if flags else []
+    return entry
+
+
+def _format_astro_human(parts, astro_data):
+    """Format --astro mode as human-readable lines."""
+    # parts: wd_field, Sun, Moon, Mercury, Venus, Mars, Jupiter, Saturn, Asp, Flags
+    wd = parts[0]
+    wd_parts = wd.split(" ")
+    weekday_full = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
+    planet = wd_parts[0].split("/")[1] if "/" in wd_parts[0] else ""
+    date_str = wd_parts[1] if len(wd_parts) > 1 else ""
+
+    lines = []
+    lines.append("  " + weekday_full + ", " + date_str + "  (ruler: " + planet + ")")
+    lines.append("  " + "-" * 50)
+
+    # Planets (indices 1-7 in parts)
+    planet_labels = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn"]
+    for i, label in enumerate(planet_labels):
+        _, val = _strip_prefix(parts[1 + i])
+        rx_note = "  \u2190 retrograde" if " Rx" in val else ""
+        val_clean = val.replace(" Rx", "")
+        lines.append("  " + label + ":" + " " * max(1, 10 - len(label)) + val_clean + rx_note)
+
+    # Aspects
+    _, asp_val = _strip_prefix(parts[8])
+    if asp_val != "---":
+        lines.append("  Aspects:   " + asp_val)
+
+    # Flags
+    _, flag_val = _strip_prefix(parts[9])
+    if flag_val != "---":
+        lines.append("  Flags:     " + flag_val)
+
+    return "\n".join(lines)
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -2287,11 +2484,17 @@ def main():
                         help="Output only today's date (overrides --start/--end)")
     parser.add_argument("-H", "--human", action="store_true", default=False,
                         help="Human-readable multi-line output (one labeled block per day)")
+    parser.add_argument("--astro", action="store_true", default=False,
+                        help="Astrology mode: planetary zodiac signs, retrograde, conjunctions (requires ephem)")
     args = parser.parse_args()
 
-    # --full and --main-cycles are mutually exclusive output modes
-    if args.full and args.main_cycles:
-        parser.error("--full and --main-cycles are mutually exclusive")
+    # Output modes are mutually exclusive
+    active_modes = [args.full, args.main_cycles, args.astro]
+    if sum(active_modes) > 1:
+        parser.error("--full, --main-cycles, and --astro are mutually exclusive")
+
+    if args.astro and not HAS_EPHEM:
+        parser.error("--astro requires the 'ephem' package: pip install ephem")
 
     if args.today:
         today_str = date.today().isoformat()
@@ -2313,6 +2516,8 @@ def main():
             out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
         elif args.full:
             out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
+        elif args.astro:
+            out.write("# Format: Gregorian(Full/Planet date) | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | Flags\n")
         else:
             out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
 
@@ -2335,7 +2540,10 @@ def main():
 
         # --- Mode-specific parts ---
         full_data = None
-        if args.main_cycles:
+        astro_data = None
+        if args.astro:
+            parts, astro_data = compute_astro_parts(current, wd_field, moon_phase, flags_field)
+        elif args.main_cycles:
             parts, cycle_data = compute_main_cycles_parts(current, wd_field, is_dot, moon_phase)
         elif args.full:
             base_parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
@@ -2343,18 +2551,24 @@ def main():
         else:
             parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
-        parts.append(flags_field)
+        if not args.astro:
+            parts.append(flags_field)
 
         # --- Output ---
         if args.json:
-            if args.main_cycles:
+            if args.astro:
+                entry = build_json_astro(current, wd_field, astro_data, moon_phase, flags)
+            elif args.main_cycles:
                 entry = build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags)
             else:
                 entry = build_json_compact_or_full(current, args, wd_field, atl_field, zod,
                                                    season, moon13, moon_phase, full_data, flags)
             json_results.append(entry)
         elif args.human:
-            out.write(format_human(parts, args) + "\n")
+            if args.astro:
+                out.write(_format_astro_human(parts, astro_data) + "\n")
+            else:
+                out.write(format_human(parts, args) + "\n")
         else:
             out.write(" | ".join(parts) + "\n")
 
