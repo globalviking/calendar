@@ -1924,6 +1924,148 @@ def compute_saka_bali(d):
 
 
 # ============================================================
+# Human-readable formatting
+# ============================================================
+
+def _strip_prefix(field):
+    """Remove the 'Tag:' prefix from a field string. Returns (label, value)."""
+    if ":" in field:
+        idx = field.index(":")
+        return field[:idx], field[idx + 1:]
+    return "", field
+
+
+def _format_compact_human(parts):
+    """Format compact mode (7 parts) as human-readable lines."""
+    # parts: wd_field, atl_field, zod, season, moon13, moon_phase, flags_field
+    wd = parts[0]
+    # "Tuesday/Mars 2026-06-30"
+    wd_parts = wd.split(" ")
+    weekday_full = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
+    planet = wd_parts[0].split("/")[1] if "/" in wd_parts[0] else ""
+    date_str = wd_parts[1] if len(wd_parts) > 1 else ""
+
+    lines = []
+    lines.append("  " + weekday_full + ", " + date_str + "  (ruler: " + planet + ")")
+    lines.append("  " + "-" * 40)
+
+    # Atlantean
+    _, atl_val = _strip_prefix(parts[1])
+    lines.append("  Atlantean:  " + atl_val)
+
+    # Zodiac
+    _, zod_val = _strip_prefix(parts[2])
+    lines.append("  Zodiac:     " + zod_val)
+
+    # Season
+    _, sea_val = _strip_prefix(parts[3])
+    lines.append("  Season:     " + sea_val)
+
+    # 13-Moon
+    _, m13_val = _strip_prefix(parts[4])
+    lines.append("  13-Moon:    " + m13_val)
+
+    # Moon phase
+    _, moon_val = _strip_prefix(parts[5])
+    lines.append("  Moon:       " + moon_val)
+
+    # Flags
+    _, flag_val = _strip_prefix(parts[6])
+    if flag_val != "---":
+        lines.append("  Flags:      " + flag_val)
+
+    return "\n".join(lines)
+
+
+def _format_main_cycles_human(parts):
+    """Format main-cycles mode (9 parts) as human-readable lines."""
+    # parts: wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase, flags_field
+    wd = parts[0]
+    wd_parts = wd.split(" ")
+    weekday_full = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
+    planet = wd_parts[0].split("/")[1] if "/" in wd_parts[0] else ""
+    date_str = wd_parts[1] if len(wd_parts) > 1 else ""
+
+    lines = []
+    lines.append("  " + weekday_full + ", " + date_str + "  (ruler: " + planet + ")")
+    lines.append("  " + "-" * 50)
+
+    # 7-day
+    _, val = _strip_prefix(parts[1])
+    lines.append("  7-Day Planet:   " + val)
+
+    # 10-day Decan
+    _, val = _strip_prefix(parts[2])
+    lines.append("  10-Day Decan:   " + val)
+
+    # 13-day Wavespell
+    _, val = _strip_prefix(parts[3])
+    lines.append("  13-Day Wave:    " + val)
+
+    # 12-month Zodiac
+    _, val = _strip_prefix(parts[4])
+    lines.append("  12-Mo Zodiac:   " + val)
+
+    # 12-month Atlantean
+    _, val = _strip_prefix(parts[5])
+    lines.append("  12-Mo Atlantean:" + val)
+
+    # 13-month Moon
+    _, val = _strip_prefix(parts[6])
+    lines.append("  13-Mo 13Moon:   " + val)
+
+    # Moon phase
+    _, val = _strip_prefix(parts[7])
+    lines.append("  Moon:           " + val)
+
+    # Flags
+    _, val = _strip_prefix(parts[8])
+    if val != "---":
+        lines.append("  Flags:          " + val)
+
+    return "\n".join(lines)
+
+
+# Human-readable labels for full-mode fields (in order after the 6 compact fields)
+_FULL_LABELS = [
+    "9 Star Ki", "Sexagenary", "Alkhemia", "Vedic", "Chinese Lunar",
+    "Hebrew", "Mayan", "Celtic Tree", "Islamic", "Aztec",
+    "Persian", "Egyptian", "Hindu", "Javanese", "Saka India",
+    "Saka Bali", "Decan", "Wavespell",
+]
+
+
+def _format_full_human(parts):
+    """Format full mode (25 parts) as human-readable lines."""
+    # First 6 are compact fields (indices 0-5), then 18 full-only (indices 6-23), then flags (index 24)
+    lines = []
+    # Reuse compact formatting for first 7 parts (6 compact + flags at index 6)
+    # But in full mode, flags is at the end — so pass first 6 + a dummy
+    lines.append(_format_compact_human(parts[:6] + ["Flags:---"]))
+    lines.append("")
+    lines.append("  " + "~" * 40)
+    for i in range(18):
+        label = _FULL_LABELS[i]
+        _, val = _strip_prefix(parts[6 + i])
+        lines.append("  " + label + ":" + " " * max(1, 14 - len(label)) + val)
+    # Flags is parts[24]
+    _, flag_val = _strip_prefix(parts[24])
+    if flag_val != "---":
+        lines.append("  Flags:          " + flag_val)
+    return "\n".join(lines)
+
+
+def format_human(d, parts, args):
+    """Build a human-readable multi-line block for one day."""
+    if args.main_cycles:
+        return _format_main_cycles_human(parts)
+    elif args.full:
+        return _format_full_human(parts)
+    else:
+        return _format_compact_human(parts)
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -1947,6 +2089,8 @@ def main():
                         help="Output as JSON array (works with --main-cycles, --full, or compact)")
     parser.add_argument("--today", action="store_true", default=False,
                         help="Output only today's date (overrides --start/--end)")
+    parser.add_argument("-H", "--human", action="store_true", default=False,
+                        help="Human-readable multi-line output (one labeled block per day)")
     args = parser.parse_args()
 
     if args.today:
@@ -1962,8 +2106,8 @@ def main():
     else:
         out = sys.stdout
 
-    # Header (skip for JSON — output is structured)
-    if not args.json:
+    # Header (skip for JSON and human — output is structured)
+    if not args.json and not args.human:
         out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
         if args.main_cycles:
             out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
@@ -2170,6 +2314,9 @@ def main():
                     entry["wavespell"] = wavespell if args.full or args.main_cycles else None
                 entry["flags"] = flags if flags else []
             json_results.append(entry)
+        elif args.human:
+            # Human-readable multi-line block
+            out.write(format_human(current, parts, args) + "\n")
         else:
             line = " | ".join(parts)
             out.write(line + "\n")
