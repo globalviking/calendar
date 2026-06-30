@@ -2093,32 +2093,41 @@ _FULL_LABELS = [
 ]
 
 
-def _format_full_human(parts):
-    """Format full mode (25 parts) as human-readable lines."""
-    # First 6 are compact fields (indices 0-5), then 18 full-only (indices 6-23), then flags (index 24)
+def _format_full_human(parts, ordered_labels=None):
+    """Format full mode as human-readable lines.
+
+    ordered_labels: list of label strings for the full-mode fields (after compact 6).
+    If None, uses the default _FULL_LABELS for backward compatibility.
+    """
+    if ordered_labels is None:
+        ordered_labels = _FULL_LABELS
+
+    num_full = len(ordered_labels)
+    # First 6 are compact fields, then num_full full-only, then flags at the end
     lines = []
-    # Reuse compact formatting for first 7 parts (6 compact + flags at index 6)
-    # But in full mode, flags is at the end — so pass first 6 + a dummy
+    # Reuse compact formatting for first 6 fields (flags is at end, so pass dummy)
     lines.append(_format_compact_human(parts[:6] + ["Flags:---"]))
     lines.append("")
     lines.append("  " + "~" * 40)
-    for i in range(18):
-        label = _FULL_LABELS[i]
+    for i in range(num_full):
+        label = ordered_labels[i]
         _, val = _strip_prefix(parts[6 + i])
         lines.append("  " + label + ":" + " " * max(1, 14 - len(label)) + val)
-    # Flags is parts[24]
-    _, flag_val = _strip_prefix(parts[24])
-    if flag_val != "---":
-        lines.append("  Flags:          " + flag_val)
+    # Flags is last element
+    flags_idx = 6 + num_full
+    if flags_idx < len(parts):
+        _, flag_val = _strip_prefix(parts[flags_idx])
+        if flag_val != "---":
+            lines.append("  Flags:          " + flag_val)
     return "\n".join(lines)
 
 
-def format_human(parts, args):
+def format_human(parts, args, ordered_labels=None):
     """Build a human-readable multi-line block for one day."""
     if args.main_cycles:
         return _format_main_cycles_human(parts)
     elif args.full:
-        return _format_full_human(parts)
+        return _format_full_human(parts, ordered_labels)
     else:
         return _format_compact_human(parts)
 
@@ -2241,41 +2250,51 @@ def compute_main_cycles_parts(current, wd_field, is_dot, moon_phase):
     return parts, cycle_data
 
 
-def compute_full_parts(current, is_dot, alk_result, base_parts):
-    """Extend base_parts with the 18 full-mode calendar fields.
+def compute_full_parts(current, is_dot, alk_result, base_parts, systems=None):
+    """Extend base_parts with the selected full-mode calendar fields.
 
-    Returns the complete parts list (base + full fields + flags appended by caller).
+    systems: set of system names to include, or None for all.
+    Returns (parts_list, full_data_dict, ordered_labels).
     """
-    nine_sk = compute_nine_star_ki(current.year)
-    sex = compute_sexagenary(current.year)
-    vedic = compute_vedic(current)
-    chinese = compute_chinese_lunar(current)
-    hebrew = compute_hebrew(current)
-    mayan = compute_mayan(current)
-    celtic = compute_celtic_tree(current)
-    islamic = compute_islamic(current)
-    aztec = compute_aztec(current)
-    persian = compute_persian(current)
-    egyptian = compute_egyptian(current)
-    hindu = compute_hindu(current)
-    javanese = compute_javanese(current)
-    saka_india = compute_saka_india(current)
-    saka_bali = compute_saka_bali(current)
-    decan = compute_decan(current, is_dot)
-    wavespell = compute_wavespell(current)
-
-    base_parts.extend([nine_sk, sex, alk_result, vedic, chinese, hebrew, mayan, celtic,
-                       islamic, aztec, persian, egyptian, hindu, javanese, saka_india,
-                       saka_bali, decan, wavespell])
-
-    full_data = {
-        "nine_sk": nine_sk, "sex": sex, "alk_result": alk_result, "vedic": vedic,
-        "chinese": chinese, "hebrew": hebrew, "mayan": mayan, "celtic": celtic,
-        "islamic": islamic, "aztec": aztec, "persian": persian, "egyptian": egyptian,
-        "hindu": hindu, "javanese": javanese, "saka_india": saka_india,
-        "saka_bali": saka_bali, "decan": decan, "wavespell": wavespell,
+    # Registry: name -> (label, compute_function_or_value)
+    # For year-based systems, we pass current.year; for date-based, current.
+    all_systems = {
+        "9sk":       ("9SK",        compute_nine_star_ki(current.year)),
+        "sex":       ("Sex",        compute_sexagenary(current.year)),
+        "alk":       ("Alk",        alk_result),
+        "vedic":     ("Ved",        compute_vedic(current)),
+        "chinese":   ("Chi",        compute_chinese_lunar(current)),
+        "hebrew":    ("Heb",        compute_hebrew(current)),
+        "mayan":     ("May",        compute_mayan(current)),
+        "celtic":    ("Cel",        compute_celtic_tree(current)),
+        "islamic":   ("Isl",        compute_islamic(current)),
+        "aztec":     ("Azt",        compute_aztec(current)),
+        "persian":   ("Per",        compute_persian(current)),
+        "egyptian":  ("Eg",         compute_egyptian(current)),
+        "hindu":     ("Hin",        compute_hindu(current)),
+        "javanese":  ("Jav",        compute_javanese(current)),
+        "saka-india": ("SakI",      compute_saka_india(current)),
+        "saka-bali": ("SakB",       compute_saka_bali(current)),
+        "decan":     ("Dec",        compute_decan(current, is_dot)),
+        "wavespell": ("Wav",        compute_wavespell(current)),
     }
-    return base_parts, full_data
+
+    # Determine which systems to include
+    if systems is None:
+        selected = list(all_systems.keys())
+    else:
+        selected = [s for s in all_systems if s in systems]
+
+    # Build parts and data in canonical order
+    ordered_labels = []
+    full_data = {}
+    for key in selected:
+        label, value = all_systems[key]
+        base_parts.append(value)
+        full_data[key] = value
+        ordered_labels.append(label)
+
+    return base_parts, full_data, ordered_labels
 
 
 def build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags):
@@ -2341,24 +2360,19 @@ def build_json_compact_or_full(current, args, wd_field, atl_field, zod, season, 
     entry["13moon"] = moon13
     entry["moon_phase"] = moon_phase
     if args.full and full_data:
-        entry["nine_star_ki"] = full_data["nine_sk"]
-        entry["sexagenary"] = full_data["sex"]
-        entry["alkhemia"] = full_data["alk_result"]
-        entry["vedic"] = full_data["vedic"]
-        entry["chinese_lunar"] = full_data["chinese"]
-        entry["hebrew"] = full_data["hebrew"]
-        entry["mayan"] = full_data["mayan"]
-        entry["celtic"] = full_data["celtic"]
-        entry["islamic"] = full_data["islamic"]
-        entry["aztec"] = full_data["aztec"]
-        entry["persian"] = full_data["persian"]
-        entry["egyptian"] = full_data["egyptian"]
-        entry["hindu"] = full_data["hindu"]
-        entry["javanese"] = full_data["javanese"]
-        entry["saka_india"] = full_data["saka_india"]
-        entry["saka_bali"] = full_data["saka_bali"]
-        entry["decan"] = full_data["decan"]
-        entry["wavespell"] = full_data["wavespell"]
+        # JSON key names for each system
+        json_keys = {
+            "9sk": "nine_star_ki", "sex": "sexagenary", "alk": "alkhemia",
+            "vedic": "vedic", "chinese": "chinese_lunar", "hebrew": "hebrew",
+            "mayan": "mayan", "celtic": "celtic", "islamic": "islamic",
+            "aztec": "aztec", "persian": "persian", "egyptian": "egyptian",
+            "hindu": "hindu", "javanese": "javanese",
+            "saka-india": "saka_india", "saka-bali": "saka_bali",
+            "decan": "decan", "wavespell": "wavespell",
+        }
+        for key, value in full_data.items():
+            json_key = json_keys.get(key, key)
+            entry[json_key] = value
     entry["flags"] = flags if flags else []
     return entry
 
@@ -2486,7 +2500,30 @@ def main():
                         help="Human-readable multi-line output (one labeled block per day)")
     parser.add_argument("--astro", action="store_true", default=False,
                         help="Astrology mode: planetary zodiac signs, retrograde, conjunctions (requires ephem)")
+    parser.add_argument("--systems", default=None,
+                        help="Comma-separated calendar systems to include (e.g. vedic,mayan,hebrew). "
+                             "Use 'all' for all systems. Implies --full output. "
+                             "Available: 9sk,sex,alk,vedic,chinese,hebrew,mayan,celtic,islamic,aztec,"
+                             "persian,egyptian,hindu,javanese,saka-india,saka-bali,decan,wavespell")
     args = parser.parse_args()
+
+    # Parse --systems into a set
+    selected_systems = None
+    if args.systems:
+        if args.systems.lower() == "all":
+            selected_systems = None  # None means all
+        else:
+            selected_systems = set(s.strip().lower() for s in args.systems.split(","))
+            # Validate
+            valid = {"9sk", "sex", "alk", "vedic", "chinese", "hebrew", "mayan", "celtic",
+                     "islamic", "aztec", "persian", "egyptian", "hindu", "javanese",
+                     "saka-india", "saka-bali", "decan", "wavespell"}
+            invalid = selected_systems - valid
+            if invalid:
+                parser.error("Unknown system(s): " + ", ".join(sorted(invalid)) +
+                             ". Valid: " + ", ".join(sorted(valid)))
+            # --systems implies --full
+            args.full = True
 
     # Output modes are mutually exclusive
     active_modes = [args.full, args.main_cycles, args.astro]
@@ -2512,12 +2549,22 @@ def main():
     # Header (skip for JSON and human — output is structured)
     if not args.json and not args.human:
         out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
-        if args.main_cycles:
+        if args.astro:
+            out.write("# Format: Gregorian(Full/Planet date) | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | Flags\n")
+        elif args.main_cycles:
             out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
         elif args.full:
-            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
-        elif args.astro:
-            out.write("# Format: Gregorian(Full/Planet date) | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | Flags\n")
+            if selected_systems is None:
+                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
+            else:
+                # Dynamic header based on selected systems
+                all_labels = {"9sk":"9SK","sex":"Sexagenary","alk":"Alkhemia","vedic":"Vedic",
+                    "chinese":"ChineseLunar","hebrew":"Hebrew","mayan":"Mayan","celtic":"Celtic",
+                    "islamic":"Islamic","aztec":"Aztec","persian":"Persian","egyptian":"Egyptian",
+                    "hindu":"Hindu","javanese":"Javanese","saka-india":"SakaIndia",
+                    "saka-bali":"SakaBali","decan":"Decan","wavespell":"Wavespell"}
+                sys_names = [all_labels[k] for k in sorted(selected_systems)]
+                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | " + " | ".join(sys_names) + " | Flags\n")
         else:
             out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
 
@@ -2547,7 +2594,7 @@ def main():
             parts, cycle_data = compute_main_cycles_parts(current, wd_field, is_dot, moon_phase)
         elif args.full:
             base_parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
-            parts, full_data = compute_full_parts(current, is_dot, alk_result, base_parts)
+            parts, full_data, ordered_labels = compute_full_parts(current, is_dot, alk_result, base_parts, selected_systems)
         else:
             parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
@@ -2568,7 +2615,7 @@ def main():
             if args.astro:
                 out.write(_format_astro_human(parts, astro_data) + "\n")
             else:
-                out.write(format_human(parts, args) + "\n")
+                out.write(format_human(parts, args, ordered_labels if args.full else None) + "\n")
         else:
             out.write(" | ".join(parts) + "\n")
 
