@@ -74,6 +74,12 @@ TROPICAL_ZODIAC_SYMBOLS = [
     "\u264e", "\u264f", "\u2650", "\u2651", "\u2652", "\u2653",
 ]
 
+# Abbreviated zodiac sign names for Moon field (3-letter)
+MOON_ZODIAC_ABBR = [
+    "Ari", "Tau", "Gem", "Can", "Leo", "Vir",
+    "Lib", "Sco", "Sag", "Cap", "Aqu", "Pis",
+]
+
 ATLANTEAN_CHAKRAS = [
     "Crown", "3rdEye", "Throat", "Heart", "SolarPlex",
     "Sacral", "Root", "Knees", "Ankles", "Toroid",
@@ -790,6 +796,45 @@ def compute_moon_phase(d):
     illum_pct = int(round(illum_frac * 100))
 
     return "Moon:" + phase + "(" + str(illum_pct) + "%)"
+
+
+def compute_moon_zodiac(d):
+    """Compute the tropical zodiac sign of the Moon for date d.
+
+    Uses the same solar longitude model as compute_zodiac, then adds
+    the lunar displacement from the nearest new moon reference date
+    (~13.176 deg/day sidereal, but tropical approximation is fine
+    for sign-level accuracy).
+
+    Returns a string like 'Cap\\u2651' (abbreviated sign name + symbol).
+    """
+    jd = to_julian_day(d)
+    t = (jd - 2451545.0) / 36525.0
+    # Mean solar longitude (tropical)
+    l0_sun = 280.460 + 36000.770 * t
+    m_sun = 357.528 + 35999.050 * t
+    m_sun_rad = math.radians(m_sun)
+    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
+    sun_tropical = (l0_sun + c_sun) % 360.0
+
+    # Find nearest past new moon reference date
+    ref = MOON_REFERENCE_DATES[0]
+    for r in MOON_REFERENCE_DATES:
+        if r <= d:
+            ref = r
+        else:
+            break
+    days_since_ref = (d - ref).days
+
+    # Moon's tropical longitude ≈ Sun's longitude + 13.176°/day × days since new moon
+    # At new moon, Moon ≈ Sun (elongation = 0)
+    moon_tropical = (sun_tropical + 13.176396 * days_since_ref) % 360.0
+
+    sign_idx = int(moon_tropical // 30.0) % 12
+    abbr = MOON_ZODIAC_ABBR[sign_idx]
+    sym = TROPICAL_ZODIAC_SYMBOLS[sign_idx]
+
+    return abbr + sym
 
 
 def compute_nine_star_ki(year):
@@ -1937,6 +1982,8 @@ def main():
         season = compute_season(current, args.hemisphere)
         moon13 = compute_13moon(current)
         moon_phase = compute_moon_phase(current)
+        moon_zod = compute_moon_zodiac(current)
+        moon_phase = moon_phase + " " + moon_zod
 
         # Build flags
         flags = []
@@ -2086,11 +2133,13 @@ def main():
                         "power": m13_power,
                         "action": m13_action,
                     }
-                # Parse moon phase: "Moon:WaxGib(97%)"
+                # Parse moon phase: "Moon:FullMoon(99%) Cap\u2651"
                 mp = moon_phase.replace("Moon:", "")
-                mp_phase = mp.split("(")[0]
-                mp_illum = mp.split("(")[1].replace(")", "").replace("%", "")
-                entry["moon_phase"] = {"phase": mp_phase, "illumination_pct": int(mp_illum)}
+                mp_main = mp.split(" ")[0]  # "FullMoon(99%)"
+                mp_phase = mp_main.split("(")[0]
+                mp_illum = mp_main.split("(")[1].replace(")", "").replace("%", "")
+                mp_zod = mp.split(" ")[1] if " " in mp else ""
+                entry["moon_phase"] = {"phase": mp_phase, "illumination_pct": int(mp_illum), "zodiac": mp_zod}
                 entry["flags"] = flags if flags else []
             else:
                 # Compact or full — use field strings
