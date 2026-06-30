@@ -2483,6 +2483,222 @@ def _format_astro_human(parts, astro_data):
     return "\n".join(lines)
 
 
+
+# ============================================================
+# Unified mode — the default daily view
+# ============================================================
+
+def compute_unified_parts(current, wd_field, atl_field, moon_phase, alk_result,
+                          is_dot, flags, flags_field):
+    """Build the parts list for the unified default mode.
+
+    Order: Alkhemia, Atlantean, Moon, Eclipse, 13-Moon, Celtic-28,
+           7-Day, Decan, Wavespell, Sun, Mercury, Venus, Mars, Jupiter,
+           Saturn, Aspects, 9SK, Sexagenary, Gregorian
+
+    Returns (parts_list, unified_data) where unified_data is a dict
+    of structured values for JSON output.
+    """
+    astro = compute_astro(current)
+    moon13 = compute_13moon(current)
+    celtic = compute_celtic_tree(current)
+    decan = compute_decan(current, is_dot)
+    wavespell = compute_wavespell(current)
+    nine_sk = compute_nine_star_ki(current.year)
+    sex = compute_sexagenary(current.year)
+
+    # Eclipse field (only when present)
+    eclipse_field = "Eclipse:---"
+    eclipse_name = ""
+    if "ECLIPSE:" in alk_result:
+        eclipse_name = alk_result.split("ECLIPSE:")[1]
+        eclipse_field = "Eclipse:" + eclipse_name
+
+    # Planet fields
+    planet_fields = []
+    for pd in astro["planets"]:
+        field = pd["name"] + pd["symbol"] + ":" + pd["sign_abbr"] + pd["sign_sym"]
+        if pd["is_rx"]:
+            field = field + " Rx"
+        planet_fields.append(field)
+
+    # Aspects
+    aspects = astro["rx_list"] + astro["conjunctions"]
+    aspects_field = "Asp:" + " ".join(aspects) if aspects else "Asp:---"
+
+    # Short cycles
+    planet_ruler = PLANETARY_RULERS[current.weekday()]
+    planet_sym = PLANETARY_SYMBOLS.get(planet_ruler, "")
+    seven_day = "7D:" + planet_ruler + planet_sym
+
+    parts = [
+        alk_result,          # 0: Alkhemia
+        atl_field,           # 1: Atlantean
+        moon_phase,          # 2: Moon phase
+        eclipse_field,       # 3: Eclipse (--- when none)
+        moon13,              # 4: 13-Moon
+        celtic,              # 5: 28-Day Celtic
+        seven_day,           # 6: 7-Day Planet
+        decan,               # 7: 10-Day Decan
+        wavespell,           # 8: 13-Day Wavespell
+    ]
+    # Planets: Sun=9, Moon=10, Mercury=11, Venus=12, Mars=13, Jupiter=14, Saturn=15
+    parts.extend(planet_fields)  # indices 9-15
+    parts.append(aspects_field)  # 16: Aspects
+    parts.append(nine_sk)        # 17: 9 Star Ki
+    parts.append(sex)            # 18: Sexagenary
+    parts.append(wd_field)       # 19: Gregorian (last)
+    parts.append(flags_field)    # 20: Flags (HoliNada, DOT)
+
+    unified_data = {
+        "alkhemia": alk_result,
+        "atlantean": atl_field,
+        "moon_phase": moon_phase,
+        "eclipse": eclipse_name if eclipse_name else None,
+        "13moon": moon13,
+        "celtic_28": celtic,
+        "7day": seven_day,
+        "decan": decan,
+        "wavespell": wavespell,
+        "astro": astro,
+        "9sk": nine_sk,
+        "sexagenary": sex,
+        "gregorian": wd_field,
+        "flags": flags,
+    }
+
+    return parts, unified_data
+
+
+def _format_unified_human(parts, unified_data):
+    """Format the unified default mode as human-readable lines."""
+    wd = parts[19]  # Gregorian is at index 19
+    wd_parts = wd.split(" ")
+    weekday_full = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
+    planet = wd_parts[0].split("/")[1] if "/" in wd_parts[0] else ""
+    date_str = wd_parts[1] if len(wd_parts) > 1 else ""
+
+    lines = []
+    lines.append("  " + weekday_full + ", " + date_str + "  (ruler: " + planet + ")")
+    lines.append("  " + "-" * 50)
+
+    # Alkhemia
+    _, val = _strip_prefix(parts[0])
+    lines.append("  Alkhemia:    " + val)
+
+    # Atlantean
+    _, val = _strip_prefix(parts[1])
+    lines.append("  Atlantean:   " + val)
+
+    # Moon phase
+    _, val = _strip_prefix(parts[2])
+    lines.append("  Moon:        " + val)
+
+    # Eclipse (only if present)
+    _, val = _strip_prefix(parts[3])
+    if val != "---":
+        lines.append("  Eclipse:     " + val)
+
+    # 13-Moon
+    _, val = _strip_prefix(parts[4])
+    lines.append("  13-Moon:     " + val)
+
+    # 28-Day Celtic
+    _, val = _strip_prefix(parts[5])
+    lines.append("  28-Day Cel:  " + val)
+
+    # 7-Day Planet
+    _, val = _strip_prefix(parts[6])
+    lines.append("  7-Day:       " + val)
+
+    # 10-Day Decan
+    _, val = _strip_prefix(parts[7])
+    lines.append("  10-Day Dec:  " + val)
+
+    # 13-Day Wavespell
+    _, val = _strip_prefix(parts[8])
+    lines.append("  13-Day Wav:  " + val)
+
+    # Planets (indices 9-15)
+    planet_labels = ["Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn"]
+    for i, label in enumerate(planet_labels):
+        _, val = _strip_prefix(parts[9 + i])
+        rx_note = "  \u2190 retrograde" if " Rx" in val else ""
+        val_clean = val.replace(" Rx", "")
+        lines.append("  " + label + ":" + " " * max(1, 12 - len(label)) + val_clean + rx_note)
+
+    # Aspects
+    _, val = _strip_prefix(parts[16])
+    if val != "---":
+        lines.append("  Aspects:     " + val)
+
+    # 9 Star Ki
+    _, val = _strip_prefix(parts[17])
+    lines.append("  9 Star Ki:   " + val)
+
+    # Sexagenary
+    _, val = _strip_prefix(parts[18])
+    lines.append("  Sexagenary:  " + val)
+
+    # Gregorian
+    _, val = _strip_prefix(parts[19])
+    lines.append("  Gregorian:   " + val)
+
+    # Flags (HoliNada, DOT — eclipses already shown above)
+    _, val = _strip_prefix(parts[20])
+    if val != "---":
+        # Filter out ECLIPSE since it's shown above
+        flag_items = val.split()
+        non_eclipse = [f for f in flag_items if not f.startswith("ECLIPSE:")]
+        if non_eclipse:
+            lines.append("  Flags:       " + " ".join(non_eclipse))
+
+    return "\n".join(lines)
+
+
+def build_json_unified(current, unified_data):
+    """Build a JSON entry dict for the unified default mode."""
+    entry = {"date": current.isoformat()}
+
+    wd = unified_data["gregorian"]
+    wd_parts = wd.split(" ")
+    entry["weekday"] = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
+    entry["planetary_ruler"] = wd_parts[0].split("/")[1] if "/" in wd_parts[0] else ""
+
+    entry["alkhemia"] = unified_data["alkhemia"]
+    entry["atlantean"] = unified_data["atlantean"]
+    entry["moon_phase"] = unified_data["moon_phase"]
+    if unified_data["eclipse"]:
+        entry["eclipse"] = unified_data["eclipse"]
+    entry["13moon"] = unified_data["13moon"]
+    entry["celtic_28"] = unified_data["celtic_28"]
+    entry["7day"] = unified_data["7day"]
+    entry["decan"] = unified_data["decan"]
+    entry["wavespell"] = unified_data["wavespell"]
+
+    astro = unified_data["astro"]
+    entry["planets"] = []
+    for pd in astro["planets"]:
+        entry["planets"].append({
+            "name": pd["name"],
+            "symbol": pd["symbol"],
+            "sign": pd["sign_abbr"],
+            "symbol_zodiac": pd["sign_sym"],
+            "longitude_deg": round(pd["longitude"], 2),
+            "retrograde": pd["is_rx"],
+        })
+    entry["aspects"] = {
+        "retrograde": astro["rx_list"],
+        "conjunctions": astro["conjunctions"],
+    }
+
+    entry["9sk"] = unified_data["9sk"]
+    entry["sexagenary"] = unified_data["sexagenary"]
+    entry["flags"] = unified_data["flags"] if unified_data["flags"] else []
+
+    return entry
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -2577,7 +2793,7 @@ def main():
                 sys_names = [all_labels[k] for k in sorted(selected_systems)]
                 out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | 13Moon | Moon | Season | " + " | ".join(sys_names) + " | Flags\n")
         else:
-            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | 13Moon | Moon | Season | Flags\n")
+            out.write("# Format: Alkhemia | Atlantean | Moon | Eclipse | 13Moon | 28DayCeltic | 7Day | Decan | Wavespell | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | 9SK | Sexagenary | Gregorian | Flags\n")
 
     json_results = []
     current = start
@@ -2607,10 +2823,14 @@ def main():
             base_parts = [wd_field, atl_field, zod, moon13, moon_phase, season]
             parts, full_data, ordered_labels = compute_full_parts(current, is_dot, alk_result, base_parts, selected_systems)
         else:
-            parts = [wd_field, atl_field, zod, moon13, moon_phase, season]
+            parts, unified_data = compute_unified_parts(current, wd_field, atl_field,
+                                                         moon_phase, alk_result, is_dot,
+                                                         flags, flags_field)
 
-        if not args.astro:
-            parts.append(flags_field)
+        # Unified mode already includes flags_field in parts; other modes append
+        if args.astro or args.full or args.main_cycles:
+            if not args.astro:
+                parts.append(flags_field)
 
         # --- Output ---
         if args.json:
@@ -2618,15 +2838,21 @@ def main():
                 entry = build_json_astro(current, wd_field, astro_data, moon_phase, flags)
             elif args.main_cycles:
                 entry = build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags)
-            else:
+            elif args.full:
                 entry = build_json_overview_or_full(current, args, wd_field, atl_field, zod,
                                                    season, moon13, moon_phase, full_data, flags)
+            else:
+                entry = build_json_unified(current, unified_data)
             json_results.append(entry)
         elif args.human:
             if args.astro:
                 out.write(_format_astro_human(parts, astro_data) + "\n")
+            elif args.main_cycles:
+                out.write(_format_main_cycles_human(parts) + "\n")
+            elif args.full:
+                out.write(_format_full_human(parts, ordered_labels) + "\n")
             else:
-                out.write(format_human(parts, args, ordered_labels if args.full else None) + "\n")
+                out.write(_format_unified_human(parts, unified_data) + "\n")
         else:
             out.write(" | ".join(parts) + "\n")
 
