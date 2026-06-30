@@ -2021,6 +2021,246 @@ def format_human(parts, args):
         return _format_compact_human(parts)
 
 
+def compute_flags(current, is_dot):
+    """Build the flags list and flags field string for a date.
+
+    Checks HoliNada dates, DOT days, and Alkhemia eclipses.
+    Returns (flags_list, flags_field, alk_result).
+    """
+    flags = []
+    nada = compute_holi_nada(current)
+    if nada:
+        flags.append(nada)
+    if is_dot:
+        flags.append("DOT")
+    # Always check for eclipses (even in compact mode)
+    alk_result, alk_eclipse = compute_alkhemia(current)
+    if alk_eclipse and "ECLIPSE:" in alk_result:
+        eclipse_name = alk_result.split("ECLIPSE:")[1]
+        flags.append("ECLIPSE:" + eclipse_name)
+
+    if flags:
+        flags_field = "Flags:" + " ".join(flags)
+    else:
+        flags_field = "Flags:---"
+
+    return flags, flags_field, alk_result
+
+
+def compute_main_cycles_parts(current, wd_field, is_dot, moon_phase):
+    """Build the parts list for --main-cycles mode.
+
+    Returns (parts_list, cycle_data) where cycle_data is a dict of
+    structured values needed for JSON output.
+    """
+    decan = compute_decan(current, is_dot)
+    wavespell = compute_wavespell(current)
+
+    # 7-day: planetary ruler
+    planet_ruler = PLANETARY_RULERS[current.weekday()]
+    planet_sym = PLANETARY_SYMBOLS.get(planet_ruler, "")
+    seven_day = "7D:" + planet_ruler + planet_sym
+
+    # 12-month: Zodiac month energy
+    if is_dot:
+        zod_month = "12Z:---"
+        z_sign_idx = z_sign_name = z_sign_sym = z_ruler = z_ruler_sym = z_elem = None
+    else:
+        sun_z = solar_longitude(current)
+        z_sign_idx = int(sun_z // 30.0) % 12
+        z_sign_name = TROPICAL_ZODIAC_SIGNS[z_sign_idx]
+        z_sign_sym = TROPICAL_ZODIAC_SYMBOLS[z_sign_idx]
+        z_ruler = ZODIAC_RULERS.get(z_sign_name, "---")
+        z_ruler_sym = PLANETARY_SYMBOLS.get(z_ruler, "")
+        z_elem = ZODIAC_ELEMENTS.get(z_sign_name, "---")
+        zod_month = "12Z:M" + str(z_sign_idx + 1) + "/" + z_sign_name + z_sign_sym + "/" + elem_emoji(z_elem) + "/" + z_ruler + z_ruler_sym
+
+    # 12-month: Atlantean month energy
+    if is_dot:
+        atl_month = "12A:DOT"
+        atl_month_num = atl_day_in_month = atl_const = atl_const_sym = atl_body = None
+    else:
+        atl_ny = date(current.year, 8, 4)
+        if current < atl_ny:
+            atl_ny = date(current.year - 1, 8, 4)
+        atl_day_num = (current - atl_ny).days + 1
+        atl_month_num = ((atl_day_num - 1) // 30) + 1
+        atl_day_in_month = ((atl_day_num - 1) % 30) + 1
+        atl_const = ATLANTEAN_CONSTELLATIONS[atl_month_num - 1]
+        atl_const_sym = ATLANTEAN_CONSTELLATION_SYMBOLS[atl_month_num - 1]
+        atl_week_num = ((atl_day_in_month - 1) // 10) + 1
+        atl_body = ATLANTEAN_WEEK_BODIES[atl_week_num - 1]
+        atl_month = "12A:M" + str(atl_month_num) + "/d" + str(atl_day_in_month) + "/" + atl_const + atl_const_sym + "/" + atl_body
+
+    # 13-month: 13-Moon month energy
+    moon_ny = date(current.year, 7, 26)
+    if current < moon_ny:
+        moon_ny = date(current.year - 1, 7, 26)
+    moon_day_num = (current - moon_ny).days + 1
+    if moon_day_num > 364:
+        moon13_month = "13M:DOT/Cosmic/Presence"
+        m13_month = m13_day_in = m13_tone_name = m13_power = m13_action = None
+    else:
+        m13_month = ((moon_day_num - 1) // 28) + 1
+        m13_day_in = ((moon_day_num - 1) % 28) + 1
+        m13_tone = GALACTIC_TONES[m13_month - 1]
+        m13_tone_name = m13_tone[0]
+        m13_power = m13_tone[1]
+        m13_action = m13_tone[2]
+        moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/" + m13_tone_name + "/" + m13_power + "/" + m13_action
+
+    parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase]
+
+    cycle_data = {
+        "planet_ruler": planet_ruler,
+        "planet_sym": planet_sym,
+        "decan": decan,
+        "wavespell": wavespell,
+        "is_dot": is_dot,
+        "z_sign_idx": z_sign_idx,
+        "z_sign_name": z_sign_name,
+        "z_sign_sym": z_sign_sym,
+        "z_elem": z_elem,
+        "z_ruler": z_ruler,
+        "z_ruler_sym": z_ruler_sym,
+        "atl_month_num": atl_month_num,
+        "atl_day_in_month": atl_day_in_month,
+        "atl_const": atl_const,
+        "atl_const_sym": atl_const_sym,
+        "atl_body": atl_body,
+        "moon_day_num": moon_day_num,
+        "m13_month": m13_month,
+        "m13_day_in": m13_day_in,
+        "m13_tone_name": m13_tone_name,
+        "m13_power": m13_power,
+        "m13_action": m13_action,
+    }
+
+    return parts, cycle_data
+
+
+def compute_full_parts(current, is_dot, alk_result, base_parts):
+    """Extend base_parts with the 18 full-mode calendar fields.
+
+    Returns the complete parts list (base + full fields + flags appended by caller).
+    """
+    nine_sk = compute_nine_star_ki(current.year)
+    sex = compute_sexagenary(current.year)
+    vedic = compute_vedic(current)
+    chinese = compute_chinese_lunar(current)
+    hebrew = compute_hebrew(current)
+    mayan = compute_mayan(current)
+    celtic = compute_celtic_tree(current)
+    islamic = compute_islamic(current)
+    aztec = compute_aztec(current)
+    persian = compute_persian(current)
+    egyptian = compute_egyptian(current)
+    hindu = compute_hindu(current)
+    javanese = compute_javanese(current)
+    saka_india = compute_saka_india(current)
+    saka_bali = compute_saka_bali(current)
+    decan = compute_decan(current, is_dot)
+    wavespell = compute_wavespell(current)
+
+    base_parts.extend([nine_sk, sex, alk_result, vedic, chinese, hebrew, mayan, celtic,
+                       islamic, aztec, persian, egyptian, hindu, javanese, saka_india,
+                       saka_bali, decan, wavespell])
+
+    full_data = {
+        "nine_sk": nine_sk, "sex": sex, "alk_result": alk_result, "vedic": vedic,
+        "chinese": chinese, "hebrew": hebrew, "mayan": mayan, "celtic": celtic,
+        "islamic": islamic, "aztec": aztec, "persian": persian, "egyptian": egyptian,
+        "hindu": hindu, "javanese": javanese, "saka_india": saka_india,
+        "saka_bali": saka_bali, "decan": decan, "wavespell": wavespell,
+    }
+    return base_parts, full_data
+
+
+def build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags):
+    """Build a JSON entry dict for --main-cycles mode."""
+    entry = {"date": current.isoformat()}
+    wd_parts = wd_field.split(" ")
+    entry["weekday"] = wd_parts[0].split("/")[0]
+    entry["planetary_ruler"] = wd_parts[0].split("/")[1]
+    entry["7day"] = {"planet": cycle_data["planet_ruler"], "symbol": cycle_data["planet_sym"]}
+    entry["10day_decan"] = cycle_data["decan"]
+    entry["13day_wavespell"] = cycle_data["wavespell"]
+
+    if cycle_data["is_dot"]:
+        entry["12month_zodiac"] = "---"
+        entry["12month_atlantean"] = "DOT"
+    else:
+        entry["12month_zodiac"] = {
+            "month": cycle_data["z_sign_idx"] + 1,
+            "sign": cycle_data["z_sign_name"],
+            "symbol": cycle_data["z_sign_sym"],
+            "element": cycle_data["z_elem"],
+            "ruler": cycle_data["z_ruler"],
+            "ruler_symbol": cycle_data["z_ruler_sym"],
+        }
+        entry["12month_atlantean"] = {
+            "month": cycle_data["atl_month_num"],
+            "day_in_month": cycle_data["atl_day_in_month"],
+            "constellation": cycle_data["atl_const"],
+            "symbol": cycle_data["atl_const_sym"],
+            "body": cycle_data["atl_body"],
+        }
+
+    if cycle_data["moon_day_num"] > 364:
+        entry["13month_moon"] = {"dot": True, "tone": "Cosmic", "power": "Presence"}
+    else:
+        entry["13month_moon"] = {
+            "month": cycle_data["m13_month"],
+            "day_in_month": cycle_data["m13_day_in"],
+            "tone": cycle_data["m13_tone_name"],
+            "power": cycle_data["m13_power"],
+            "action": cycle_data["m13_action"],
+        }
+
+    # Parse moon phase: "Moon:FullMoon(99%) Cap\u2651"
+    mp = moon_phase.replace("Moon:", "")
+    mp_main = mp.split(" ")[0]
+    mp_phase = mp_main.split("(")[0]
+    mp_illum = mp_main.split("(")[1].replace(")", "").replace("%", "")
+    mp_zod = mp.split(" ")[1] if " " in mp else ""
+    entry["moon_phase"] = {"phase": mp_phase, "illumination_pct": int(mp_illum), "zodiac": mp_zod}
+    entry["flags"] = flags if flags else []
+    return entry
+
+
+def build_json_compact_or_full(current, args, wd_field, atl_field, zod, season, moon13,
+                               moon_phase, full_data, flags):
+    """Build a JSON entry dict for compact or --full mode."""
+    entry = {"date": current.isoformat()}
+    entry["weekday"] = wd_field
+    entry["atlantean"] = atl_field
+    entry["zodiac"] = zod
+    entry["season"] = season
+    entry["13moon"] = moon13
+    entry["moon_phase"] = moon_phase
+    if args.full and full_data:
+        entry["nine_star_ki"] = full_data["nine_sk"]
+        entry["sexagenary"] = full_data["sex"]
+        entry["alkhemia"] = full_data["alk_result"]
+        entry["vedic"] = full_data["vedic"]
+        entry["chinese_lunar"] = full_data["chinese"]
+        entry["hebrew"] = full_data["hebrew"]
+        entry["mayan"] = full_data["mayan"]
+        entry["celtic"] = full_data["celtic"]
+        entry["islamic"] = full_data["islamic"]
+        entry["aztec"] = full_data["aztec"]
+        entry["persian"] = full_data["persian"]
+        entry["egyptian"] = full_data["egyptian"]
+        entry["hindu"] = full_data["hindu"]
+        entry["javanese"] = full_data["javanese"]
+        entry["saka_india"] = full_data["saka_india"]
+        entry["saka_bali"] = full_data["saka_bali"]
+        entry["decan"] = full_data["decan"]
+        entry["wavespell"] = full_data["wavespell"]
+    entry["flags"] = flags if flags else []
+    return entry
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -2080,6 +2320,7 @@ def main():
     current = start
     count = 0
     while current <= end:
+        # --- Common fields (always computed) ---
         wd_field = compute_weekday(current)
         atl_field, is_dot, const_or_elem = compute_atlantean(current)
         zod = compute_zodiac(current, is_dot)
@@ -2089,191 +2330,33 @@ def main():
         moon_zod = compute_moon_zodiac(current)
         moon_phase = moon_phase + " " + moon_zod
 
-        # Build flags
-        flags = []
-        nada = compute_holi_nada(current)
-        if nada:
-            flags.append(nada)
-        alk_eclipse = False
-        alk_result = "Alk:---"
-        if is_dot:
-            flags.append("DOT")
-        # Always check for eclipses (even in compact mode)
-        alk_result, alk_eclipse = compute_alkhemia(current)
-        if alk_eclipse:
-            if "ECLIPSE:" in alk_result:
-                eclipse_name = alk_result.split("ECLIPSE:")[1]
-                flags.append("ECLIPSE:" + eclipse_name)
+        # --- Flags ---
+        flags, flags_field, alk_result = compute_flags(current, is_dot)
 
-        if flags:
-            flags_field = "Flags:" + " ".join(flags)
-        else:
-            flags_field = "Flags:---"
-
-        # Compact fields (always output)
-        parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
-
+        # --- Mode-specific parts ---
+        full_data = None
         if args.main_cycles:
-            # Main-cycles mode: 7-day, 10-day, 13-day, 12-month(x2: Zodiac+Atlantean), 13-month, Moon
-            decan = compute_decan(current, is_dot)
-            wavespell = compute_wavespell(current)
-            # 7-day: planetary ruler
-            planet_ruler = PLANETARY_RULERS[current.weekday()]
-            planet_sym = PLANETARY_SYMBOLS.get(planet_ruler, "")
-            seven_day = "7D:" + planet_ruler + planet_sym
-
-            # 12-month: Zodiac month energy (sign + month num + ruling planet)
-            if is_dot:
-                zod_month = "12Z:---"
-            else:
-                sun_z = solar_longitude(current)
-                z_sign_idx = int(sun_z // 30.0) % 12
-                z_sign_name = TROPICAL_ZODIAC_SIGNS[z_sign_idx]
-                z_sign_sym = TROPICAL_ZODIAC_SYMBOLS[z_sign_idx]
-                z_ruler = ZODIAC_RULERS.get(z_sign_name, "---")
-                z_ruler_sym = PLANETARY_SYMBOLS.get(z_ruler, "")
-                z_elem = ZODIAC_ELEMENTS.get(z_sign_name, "---")
-                zod_month = "12Z:M" + str(z_sign_idx + 1) + "/" + z_sign_name + z_sign_sym + "/" + elem_emoji(z_elem) + "/" + z_ruler + z_ruler_sym
-
-            # 12-month: Atlantean month energy (constellation + month num + body + chakra)
-            if is_dot:
-                atl_month = "12A:DOT"
-            else:
-                atl_ny = date(current.year, 8, 4)
-                if current < atl_ny:
-                    atl_ny = date(current.year - 1, 8, 4)
-                atl_day_num = (current - atl_ny).days + 1
-                atl_month_num = ((atl_day_num - 1) // 30) + 1
-                atl_day_in_month = ((atl_day_num - 1) % 30) + 1
-                atl_const = ATLANTEAN_CONSTELLATIONS[atl_month_num - 1]
-                atl_const_sym = ATLANTEAN_CONSTELLATION_SYMBOLS[atl_month_num - 1]
-                atl_week_num = ((atl_day_in_month - 1) // 10) + 1
-                atl_body = ATLANTEAN_WEEK_BODIES[atl_week_num - 1]
-                atl_month = "12A:M" + str(atl_month_num) + "/d" + str(atl_day_in_month) + "/" + atl_const + atl_const_sym + "/" + atl_body
-
-            # 13-month: 13-Moon month energy (tone name + month num + power + action)
-            moon_ny = date(current.year, 7, 26)
-            if current < moon_ny:
-                moon_ny = date(current.year - 1, 7, 26)
-            moon_day_num = (current - moon_ny).days + 1
-            if moon_day_num > 364:
-                moon13_month = "13M:DOT/Cosmic/Presence"
-            else:
-                m13_month = ((moon_day_num - 1) // 28) + 1
-                m13_day_in = ((moon_day_num - 1) % 28) + 1
-                m13_tone = GALACTIC_TONES[m13_month - 1]
-                m13_tone_name = m13_tone[0]
-                m13_power = m13_tone[1]
-                m13_action = m13_tone[2]
-                moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/" + m13_tone_name + "/" + m13_power + "/" + m13_action
-
-            parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase]
-
+            parts, cycle_data = compute_main_cycles_parts(current, wd_field, is_dot, moon_phase)
         elif args.full:
-            nine_sk = compute_nine_star_ki(current.year)
-            sex = compute_sexagenary(current.year)
-            vedic = compute_vedic(current)
-            chinese = compute_chinese_lunar(current)
-            hebrew = compute_hebrew(current)
-            mayan = compute_mayan(current)
-            celtic = compute_celtic_tree(current)
-            islamic = compute_islamic(current)
-            aztec = compute_aztec(current)
-            persian = compute_persian(current)
-            egyptian = compute_egyptian(current)
-            hindu = compute_hindu(current)
-            javanese = compute_javanese(current)
-            saka_india = compute_saka_india(current)
-            saka_bali = compute_saka_bali(current)
-            decan = compute_decan(current, is_dot)
-            wavespell = compute_wavespell(current)
-            parts.extend([nine_sk, sex, alk_result, vedic, chinese, hebrew, mayan, celtic, islamic, aztec, persian, egyptian, hindu, javanese, saka_india, saka_bali, decan, wavespell])
+            base_parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
+            parts, full_data = compute_full_parts(current, is_dot, alk_result, base_parts)
+        else:
+            parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
 
         parts.append(flags_field)
 
+        # --- Output ---
         if args.json:
-            # Build structured JSON object
-            entry = {"date": current.isoformat()}
             if args.main_cycles:
-                # Parse weekday field: "Monday/Moon 2026-06-29"
-                wd_parts = wd_field.split(" ")
-                entry["weekday"] = wd_parts[0].split("/")[0]
-                entry["planetary_ruler"] = wd_parts[0].split("/")[1]
-                entry["7day"] = {"planet": planet_ruler, "symbol": planet_sym}
-                entry["10day_decan"] = decan
-                entry["13day_wavespell"] = wavespell
-                if is_dot:
-                    entry["12month_zodiac"] = "---"
-                    entry["12month_atlantean"] = "DOT"
-                else:
-                    entry["12month_zodiac"] = {
-                        "month": z_sign_idx + 1,
-                        "sign": z_sign_name,
-                        "symbol": z_sign_sym,
-                        "element": z_elem,
-                        "ruler": z_ruler,
-                        "ruler_symbol": z_ruler_sym,
-                    }
-                    entry["12month_atlantean"] = {
-                        "month": atl_month_num,
-                        "day_in_month": atl_day_in_month,
-                        "constellation": atl_const,
-                        "symbol": atl_const_sym,
-                        "body": atl_body,
-                    }
-                if moon_day_num > 364:
-                    entry["13month_moon"] = {"dot": True, "tone": "Cosmic", "power": "Presence"}
-                else:
-                    entry["13month_moon"] = {
-                        "month": m13_month,
-                        "day_in_month": m13_day_in,
-                        "tone": m13_tone_name,
-                        "power": m13_power,
-                        "action": m13_action,
-                    }
-                # Parse moon phase: "Moon:FullMoon(99%) Cap\u2651"
-                mp = moon_phase.replace("Moon:", "")
-                mp_main = mp.split(" ")[0]  # "FullMoon(99%)"
-                mp_phase = mp_main.split("(")[0]
-                mp_illum = mp_main.split("(")[1].replace(")", "").replace("%", "")
-                mp_zod = mp.split(" ")[1] if " " in mp else ""
-                entry["moon_phase"] = {"phase": mp_phase, "illumination_pct": int(mp_illum), "zodiac": mp_zod}
-                entry["flags"] = flags if flags else []
+                entry = build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags)
             else:
-                # Compact or full — use field strings
-                entry["weekday"] = wd_field
-                entry["atlantean"] = atl_field
-                entry["zodiac"] = zod
-                entry["season"] = season
-                entry["13moon"] = moon13
-                entry["moon_phase"] = moon_phase
-                if args.full:
-                    entry["nine_star_ki"] = nine_sk
-                    entry["sexagenary"] = sex
-                    entry["alkhemia"] = alk_result
-                    entry["vedic"] = vedic
-                    entry["chinese_lunar"] = chinese
-                    entry["hebrew"] = hebrew
-                    entry["mayan"] = mayan
-                    entry["celtic"] = celtic
-                    entry["islamic"] = islamic
-                    entry["aztec"] = aztec
-                    entry["persian"] = persian
-                    entry["egyptian"] = egyptian
-                    entry["hindu"] = hindu
-                    entry["javanese"] = javanese
-                    entry["saka_india"] = saka_india
-                    entry["saka_bali"] = saka_bali
-                    entry["decan"] = decan if args.full or args.main_cycles else None
-                    entry["wavespell"] = wavespell if args.full or args.main_cycles else None
-                entry["flags"] = flags if flags else []
+                entry = build_json_compact_or_full(current, args, wd_field, atl_field, zod,
+                                                   season, moon13, moon_phase, full_data, flags)
             json_results.append(entry)
         elif args.human:
-            # Human-readable multi-line block
             out.write(format_human(parts, args) + "\n")
         else:
-            line = " | ".join(parts)
-            out.write(line + "\n")
+            out.write(" | ".join(parts) + "\n")
 
         current = current + timedelta(days=1)
         count = count + 1
