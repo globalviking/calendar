@@ -769,7 +769,7 @@ def compute_alkhemia(d):
     elem_name = ALKHEMIA_ELEMENTS[cycle_num]
     sign, chakra, verb = ALKHEMIA_13DAY[day_in_cycle]
 
-    result = "Alk:" + elem_name + " d" + str(day_in_cycle) + "/" + sign + "/" + verb + "/" + chakra
+    result = "Alk:" + str(cycle_num + 1) + "-" + elem_name + " d" + str(day_in_cycle) + "/" + sign + "/" + verb + "/" + chakra
 
     is_eclipse = False
     if d in ALKHEMIA_ECLIPSES:
