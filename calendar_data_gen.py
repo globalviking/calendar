@@ -639,6 +639,42 @@ def elem_emoji(element_name):
     return element_name
 
 
+def solar_longitude(d):
+    """Compute the Sun's tropical longitude in degrees for date d.
+
+    Uses a simplified solar model: mean longitude + equation of center.
+    This is the single source of truth — previously duplicated 6x.
+    """
+    jd = to_julian_day(d)
+    t = (jd - 2451545.0) / 36525.0
+    l0 = 280.460 + 36000.770 * t
+    m = 357.528 + 35999.050 * t
+    m_rad = math.radians(m)
+    c = 1.915 * math.sin(m_rad) + 0.020 * math.sin(2 * m_rad)
+    return (l0 + c) % 360.0
+
+
+def solar_sidereal_longitude(d):
+    """Compute the Sun's sidereal longitude in degrees (tropical - Lahiri ayanamsa)."""
+    jd = to_julian_day(d)
+    return (solar_longitude(d) - lahiri_ayanamsa(jd)) % 360.0
+
+
+def nearest_new_moon(d):
+    """Find the most recent past new moon reference date for date d.
+
+    Returns the MOON_REFERENCE_DATES entry closest to but not after d.
+    This is the single source of truth — previously duplicated 4x.
+    """
+    ref = MOON_REFERENCE_DATES[0]
+    for r in MOON_REFERENCE_DATES:
+        if r <= d:
+            ref = r
+        else:
+            break
+    return ref
+
+
 def compute_weekday(d):
     """Compute weekday full name, abbreviation, planetary ruler name, and full date."""
     wd = d.weekday()
@@ -754,22 +790,9 @@ def compute_hol(d):
     return "Hol:Unknown"
 
 
-def compute_planetary(d):
-    """Compute planetary day ruler for date d."""
-    wd = d.weekday()
-    name = PLANETARY_RULERS[wd]
-    return "Pl:" + name
-
-
 def compute_moon_phase(d):
     """Compute approximate moon phase and illumination for date d."""
-    ref = MOON_REFERENCE_DATES[0]
-    for r in MOON_REFERENCE_DATES:
-        if r <= d:
-            ref = r
-        else:
-            break
-
+    ref = nearest_new_moon(d)
     days_since = (d - ref).days
     moon_age = days_since % 29.53
 
@@ -801,29 +824,13 @@ def compute_moon_phase(d):
 def compute_moon_zodiac(d):
     """Compute the tropical zodiac sign of the Moon for date d.
 
-    Uses the same solar longitude model as compute_zodiac, then adds
-    the lunar displacement from the nearest new moon reference date
-    (~13.176 deg/day sidereal, but tropical approximation is fine
-    for sign-level accuracy).
+    Uses solar_longitude() + 13.176°/day lunar displacement from the
+    nearest new moon reference date.
 
     Returns a string like 'Cap\\u2651' (abbreviated sign name + symbol).
     """
-    jd = to_julian_day(d)
-    t = (jd - 2451545.0) / 36525.0
-    # Mean solar longitude (tropical)
-    l0_sun = 280.460 + 36000.770 * t
-    m_sun = 357.528 + 35999.050 * t
-    m_sun_rad = math.radians(m_sun)
-    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
-    sun_tropical = (l0_sun + c_sun) % 360.0
-
-    # Find nearest past new moon reference date
-    ref = MOON_REFERENCE_DATES[0]
-    for r in MOON_REFERENCE_DATES:
-        if r <= d:
-            ref = r
-        else:
-            break
+    sun_tropical = solar_longitude(d)
+    ref = nearest_new_moon(d)
     days_since_ref = (d - ref).days
 
     # Moon's tropical longitude ≈ Sun's longitude + 13.176°/day × days since new moon
@@ -907,24 +914,11 @@ def compute_season(d, hemisphere="south"):
 
 
 def compute_zodiac(d, is_dot):
-    """Compute tropical zodiac sign, element, and modality from actual sun position.
-
-    Uses a simplified solar longitude model (mean longitude + equation of center)
-    to determine which tropical sign the sun is in on date d.
-    """
+    """Compute tropical zodiac sign, element, and modality from actual sun position."""
     if is_dot:
         return "Zod:---"
 
-    jd = to_julian_day(d)
-    t = (jd - 2451545.0) / 36525.0
-    # Mean solar longitude (tropical) in degrees
-    l0_sun = 280.460 + 36000.770 * t
-    # Mean anomaly
-    m_sun = 357.528 + 35999.050 * t
-    m_sun_rad = math.radians(m_sun)
-    # Equation of center correction
-    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
-    sun_tropical = (l0_sun + c_sun) % 360.0
+    sun_tropical = solar_longitude(d)
 
     # Tropical zodiac sign: 0-11 (Aries=0, Taurus=1, ..., Pisces=11)
     sign_idx = int(sun_tropical // 30.0) % 12
@@ -960,16 +954,7 @@ def compute_decan(d, is_dot):
     if is_dot:
         return "Dec:---"
 
-    jd = to_julian_day(d)
-    t = (jd - 2451545.0) / 36525.0
-    # Mean solar longitude (tropical) in degrees
-    l0_sun = 280.460 + 36000.770 * t
-    # Mean anomaly
-    m_sun = 357.528 + 35999.050 * t
-    m_sun_rad = math.radians(m_sun)
-    # Equation of center correction
-    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
-    sun_tropical = (l0_sun + c_sun) % 360.0
+    sun_tropical = solar_longitude(d)
 
     # Sign index 0-11 (Aries=0, ..., Pisces=11)
     sign_idx = int(sun_tropical // 30.0) % 12
@@ -1073,32 +1058,17 @@ def compute_wavespell(d):
 def compute_vedic(d):
     """Compute approximate Vedic Panchangam elements for date d.
 
-    Uses a simplified solar longitude model for rashi (sidereal sign),
+    Uses solar_sidereal_longitude() for rashi (sidereal sign),
     and derives nakshatra and tithi from approximate lunar longitude.
     """
-    jd = to_julian_day(d)
-
-    # --- Solar longitude (sidereal / nirayana) ---
-    t = (jd - 2451545.0) / 36525.0
-    l0_sun = 280.460 + 36000.770 * t
-    m_sun = 357.528 + 35999.050 * t
-    m_sun_rad = math.radians(m_sun)
-    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
-    sun_tropical = l0_sun + c_sun
-    ayan = lahiri_ayanamsa(jd)
-    sun_sidereal = (sun_tropical - ayan) % 360.0
+    sun_sidereal = solar_sidereal_longitude(d)
 
     # Rashi (sidereal zodiac sign): 0-11
     rashi_idx = int(sun_sidereal // 30.0) % 12
     rashi = VEDIC_SIGNS[rashi_idx]
 
     # --- Lunar longitude (sidereal, approximate) ---
-    ref = MOON_REFERENCE_DATES[0]
-    for r in MOON_REFERENCE_DATES:
-        if r <= d:
-            ref = r
-        else:
-            break
+    ref = nearest_new_moon(d)
     days_since_ref = (d - ref).days
     # At new moon, lunar longitude ≈ solar longitude
     # Moon moves ~13.176 deg/day relative to the fixed stars
@@ -1695,22 +1665,8 @@ def compute_hindu(d):
     vs_month = HINDU_VS_MONTHS[month_idx]
 
     # --- Panchanga: Nakshatra & Tithi (reuse Vedic lunar model) ---
-    jd = to_julian_day(d)
-    t = (jd - 2451545.0) / 36525.0
-    l0_sun = 280.460 + 36000.770 * t
-    m_sun = 357.528 + 35999.050 * t
-    m_sun_rad = math.radians(m_sun)
-    c_sun = 1.915 * math.sin(m_sun_rad) + 0.020 * math.sin(2 * m_sun_rad)
-    sun_tropical = l0_sun + c_sun
-    ayan = lahiri_ayanamsa(jd)
-    sun_sidereal = (sun_tropical - ayan) % 360.0
-
-    ref = MOON_REFERENCE_DATES[0]
-    for r in MOON_REFERENCE_DATES:
-        if r <= d:
-            ref = r
-        else:
-            break
+    sun_sidereal = solar_sidereal_longitude(d)
+    ref = nearest_new_moon(d)
     days_since_ref = (d - ref).days
     moon_sidereal = (sun_sidereal + 13.176396 * days_since_ref) % 360.0
 
@@ -2055,7 +2011,7 @@ def _format_full_human(parts):
     return "\n".join(lines)
 
 
-def format_human(d, parts, args):
+def format_human(parts, args):
     """Build a human-readable multi-line block for one day."""
     if args.main_cycles:
         return _format_main_cycles_human(parts)
@@ -2092,6 +2048,10 @@ def main():
     parser.add_argument("-H", "--human", action="store_true", default=False,
                         help="Human-readable multi-line output (one labeled block per day)")
     args = parser.parse_args()
+
+    # --full and --main-cycles are mutually exclusive output modes
+    if args.full and args.main_cycles:
+        parser.error("--full and --main-cycles are mutually exclusive")
 
     if args.today:
         today_str = date.today().isoformat()
@@ -2166,13 +2126,7 @@ def main():
             if is_dot:
                 zod_month = "12Z:---"
             else:
-                jd_z = to_julian_day(current)
-                t_z = (jd_z - 2451545.0) / 36525.0
-                l0_z = 280.460 + 36000.770 * t_z
-                m_z = 357.528 + 35999.050 * t_z
-                m_z_rad = math.radians(m_z)
-                c_z = 1.915 * math.sin(m_z_rad) + 0.020 * math.sin(2 * m_z_rad)
-                sun_z = (l0_z + c_z) % 360.0
+                sun_z = solar_longitude(current)
                 z_sign_idx = int(sun_z // 30.0) % 12
                 z_sign_name = TROPICAL_ZODIAC_SIGNS[z_sign_idx]
                 z_sign_sym = TROPICAL_ZODIAC_SYMBOLS[z_sign_idx]
@@ -2215,7 +2169,7 @@ def main():
 
             parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase]
 
-        if args.full:
+        elif args.full:
             nine_sk = compute_nine_star_ki(current.year)
             sex = compute_sexagenary(current.year)
             vedic = compute_vedic(current)
@@ -2316,7 +2270,7 @@ def main():
             json_results.append(entry)
         elif args.human:
             # Human-readable multi-line block
-            out.write(format_human(current, parts, args) + "\n")
+            out.write(format_human(parts, args) + "\n")
         else:
             line = " | ".join(parts)
             out.write(line + "\n")
