@@ -3,10 +3,12 @@
 calendar_data_gen.py - Generate pre-computed daily calendar data for YOSOY framework.
 
 Computes 26+ calendar systems for each day and outputs pipe-delimited, JSON, or
-human-readable data. Uses PyEphem for accurate planetary positions (--astro mode).
+human-readable data. Uses PyEphem for accurate planetary positions (--astro mode)
+and sunrise/sunset (--hours mode).
 
 Usage: python3 calendar_data_gen.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [-o OUTPUT_FILE]
-       python3 calendar_data_gen.py --today [-H|--json|--full|--main-cycles|--astro]
+       python3 calendar_data_gen.py --today [-H|--json|--full|--main-cycles|--astro|--hours]
+       python3 calendar_data_gen.py --today --hours [--system chaldean|vedic|al-biruni|egyptian] [--lat L] [--lon L] [--tz T]
 """
 
 import argparse
@@ -41,6 +43,59 @@ PLANETARY_SYMBOLS = {
     "Venus": "\u2640",
     "Saturn": "\u2644",
 }
+
+# ============================================================
+# Planetary Hours constants
+# ============================================================
+
+# Chaldean order (slowest to fastest): used by Hellenistic/medieval/Agrippa tradition
+# Also used by Al-Biruni (with night restart variation — handled in compute function)
+CHALDEAN_ORDER = ["Saturn", "Jupiter", "Mars", "Sun", "Venus", "Mercury", "Moon"]
+
+# Vedic (Hora) order: used by Jyotish — Sun, Venus, Mercury, Moon, Saturn, Jupiter, Mars
+VEDIC_ORDER = ["Sun", "Venus", "Mercury", "Moon", "Saturn", "Jupiter", "Mars"]
+
+# Day rulers (Monday=0 through Sunday=6)
+DAY_RULERS = ["Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Sun"]
+
+# Default location: Caraguatatuba, SP, Brazil
+DEFAULT_LAT = -23.62
+DEFAULT_LON = -45.41
+DEFAULT_TZ = -3  # UTC-3
+
+# Supported planetary hour systems
+PLANETARY_HOUR_SYSTEMS = ["chaldean", "vedic", "al-biruni", "egyptian"]
+
+# Activity recommendations for each planet (daytime)
+PLANETARY_HOUR_ACTIVITIES_DAY = {
+    "Sun": "LEAD / SHINE — confidence, decisions, being seen",
+    "Moon": "INTUIT / FLOW — follow intuition, start things, casual encounters",
+    "Mercury": "CONNECT / CHAT — conversation, serendipity, flirting",
+    "Venus": "ROMANCE / SOCIAL — attraction, beauty, pleasure, going out",
+    "Mars": "ACT / GO — energy, take action, workout, approach, courage",
+    "Jupiter": "EXPAND / LUCK — serendipity, optimism, abundance, try new places",
+    "Saturn": "PLAN / STRUCT — discipline, work, organize, review, strategy",
+}
+
+# Activity recommendations for each planet (nighttime)
+PLANETARY_HOUR_ACTIVITIES_NIGHT = {
+    "Sun": "Visualize tomorrow, set intentions",
+    "Moon": "Dream, meditate, creative rest, intuition",
+    "Mercury": "Read, study, plan conversations, text someone",
+    "Venus": "Romance, music, self-care, connection, dress well",
+    "Mars": "Night workout, resolve things, take action",
+    "Jupiter": "Reflect, learn, expand horizons, luck, serendipity",
+    "Saturn": "Review the day, organize, plan, discipline",
+}
+
+# Egyptian Decanic: 36 decans map to 7 planets via DECAN_CHALDEAN_RULERS (already exists, line 441).
+# Each hour of the day is ruled by a decan. The 24 hours cycle through decans starting
+# from the current day's decan. Since 36 decans ÷ 24 hours doesn't divide evenly,
+# the cycle wraps: hour N uses decan[(current_decan_idx + N - 1) % 36].
+# The planet for that hour = DECAN_CHALDEAN_RULERS[that decan index].
+# This means Egyptian hours cycle through all 7 planets but in a 36-step pattern,
+# not a 7-step pattern — giving different rulers than Chaldean/Vedic.
+
 
 # Element emojis (Unicode escape sequences for encoding safety)
 ELEMENT_EMOJIS = {
@@ -850,6 +905,178 @@ def compute_moon_zodiac(d):
     sym = TROPICAL_ZODIAC_SYMBOLS[sign_idx]
 
     return abbr + sym
+
+
+# ============================================================
+# Sunrise / Sunset for planetary hours
+# ============================================================
+
+def _sunrise_sunset(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ):
+    """Compute sunrise and sunset for date d at given lat/lon/timezone.
+
+    Returns (sunrise, sunset) as naive datetime objects in local time.
+
+    Uses PyEphem when available for accuracy. Falls back to a
+    mathematical approximation (good to ~2 min) otherwise.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    if HAS_EPHEM:
+        obs = ephem.Observer()
+        obs.lat = str(lat)
+        obs.lon = str(lon)
+        obs.date = ephem.Date(d)
+        try:
+            sr = obs.next_rising(ephem.Sun())
+            ss = obs.next_setting(ephem.Sun())
+            sr_dt = sr.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+            ss_dt = ss.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+            if ss_dt.date() > d and sr_dt.date() <= d:
+                obs2 = ephem.Observer()
+                obs2.lat = str(lat)
+                obs2.lon = str(lon)
+                obs2.date = ephem.Date(d) - 0.5
+                ss2 = obs2.next_setting(ephem.Sun())
+                ss_dt = ss2.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+            return sr_dt.replace(tzinfo=None), ss_dt.replace(tzinfo=None)
+        except Exception:
+            pass
+
+    # Mathematical fallback (accurate to ~2 minutes)
+    import math
+    doy = d.timetuple().tm_yday
+    decl = 23.44 * math.sin(math.radians(360.0 / 365 * (doy - 81)))
+    try:
+        ha = math.degrees(math.acos(
+            -math.tan(math.radians(lat)) * math.tan(math.radians(decl))
+        ))
+    except ValueError:
+        sr = datetime(d.year, d.month, d.day, 6, 0)
+        ss = datetime(d.year, d.month, d.day, 18, 0)
+        return sr, ss
+    noon_utc = 12.0 - lon / 15.0
+    sr_utc = noon_utc - ha / 15.0
+    ss_utc = noon_utc + ha / 15.0
+    sr_local = sr_utc + tz
+    ss_local = ss_utc + tz
+    sr_h = int(sr_local)
+    sr_m = int((sr_local - sr_h) * 60)
+    ss_h = int(ss_local)
+    ss_m = int((ss_local - ss_h) * 60)
+    sr = datetime(d.year, d.month, d.day, sr_h, sr_m)
+    ss = datetime(d.year, d.month, d.day, ss_h, ss_m)
+    return sr, ss
+
+
+def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
+                            system="chaldean"):
+    """Compute 24 planetary hours for date d.
+
+    Args:
+        d: datetime.date
+        lat, lon: geographic coordinates (decimal degrees)
+        tz: timezone offset from UTC (hours)
+        system: one of "chaldean", "vedic", "al-biruni", "egyptian"
+
+    Returns:
+        List of 24 dicts, each with:
+          - 'hour': ordinal (1-24)
+          - 'start': "HH:MM"
+          - 'end': "HH:MM"
+          - 'planet': planet name
+          - 'symbol': planet unicode symbol
+          - 'period': "day" or "night"
+          - 'activity': recommendation string
+
+    Systems:
+        chaldean  — Saturn→Jupiter→Mars→Sun→Venus→Mercury→Moon, 1st hour = day ruler, night continues cycle
+        vedic     — Sun→Venus→Mercury→Moon→Saturn→Jupiter→Mars, 1st hour = day ruler, night continues cycle
+        al-biruni — Same Chaldean order, but night RESTARTS from day ruler
+        egyptian  — Hour ruler from 36-decan cycle (DECAN_CHALDEAN_RULERS),
+                    not the 7-planet cycle. Fundamentally different pattern.
+
+    Day hours (sunrise to sunset) and night hours (sunset to next sunrise) have
+    different durations based on actual day/night length.
+    """
+    from datetime import datetime, timedelta
+
+    sunrise, sunset = _sunrise_sunset(d, lat, lon, tz)
+
+    day_secs = (sunset - sunrise).total_seconds()
+    night_secs = (sunrise + timedelta(days=1) - sunset).total_seconds()
+
+    if day_secs <= 0:
+        day_secs = 1
+    if night_secs <= 0:
+        night_secs = 1
+
+    day_hour_secs = day_secs / 12
+    night_hour_secs = night_secs / 12
+
+    wd = d.weekday()
+    ruler = DAY_RULERS[wd]
+
+    if system == "vedic":
+        order = VEDIC_ORDER
+        ruler_idx = order.index(ruler)
+        day_planets = [order[(ruler_idx + i) % 7] for i in range(12)]
+        night_planets = [order[(ruler_idx + 12 + j) % 7] for j in range(12)]
+
+    elif system == "al-biruni":
+        order = CHALDEAN_ORDER
+        ruler_idx = order.index(ruler)
+        day_planets = [order[(ruler_idx + i) % 7] for i in range(12)]
+        night_planets = [order[(ruler_idx + j) % 7] for j in range(12)]
+
+    elif system == "egyptian":
+        sun_tropical = solar_longitude(d)
+        sign_idx = int(sun_tropical // 30.0) % 12
+        degree_in_sign = sun_tropical % 30.0
+        decan_in_sign = int(degree_in_sign // 10.0)
+        current_decan_idx = sign_idx * 3 + decan_in_sign
+        all_decan_planets = []
+        for h in range(24):
+            decan_idx = (current_decan_idx + h) % 36
+            all_decan_planets.append(DECAN_CHALDEAN_RULERS[decan_idx])
+        day_planets = all_decan_planets[:12]
+        night_planets = all_decan_planets[12:]
+
+    else:  # chaldean (default)
+        order = CHALDEAN_ORDER
+        ruler_idx = order.index(ruler)
+        day_planets = [order[(ruler_idx + i) % 7] for i in range(12)]
+        night_planets = [order[(ruler_idx + 12 + j) % 7] for j in range(12)]
+
+    hours = []
+    for i in range(12):
+        planet = day_planets[i]
+        start = sunrise + timedelta(seconds=i * day_hour_secs)
+        end = sunrise + timedelta(seconds=(i + 1) * day_hour_secs)
+        hours.append({
+            "hour": i + 1,
+            "start": start.strftime("%H:%M"),
+            "end": end.strftime("%H:%M"),
+            "planet": planet,
+            "symbol": PLANETARY_SYMBOLS.get(planet, ""),
+            "period": "day",
+            "activity": PLANETARY_HOUR_ACTIVITIES_DAY.get(planet, ""),
+        })
+
+    for j in range(12):
+        planet = night_planets[j]
+        start = sunset + timedelta(seconds=j * night_hour_secs)
+        end = sunset + timedelta(seconds=(j + 1) * night_hour_secs)
+        hours.append({
+            "hour": j + 13,
+            "start": start.strftime("%H:%M"),
+            "end": end.strftime("%H:%M"),
+            "planet": planet,
+            "symbol": PLANETARY_SYMBOLS.get(planet, ""),
+            "period": "night",
+            "activity": PLANETARY_HOUR_ACTIVITIES_NIGHT.get(planet, ""),
+        })
+
+    return hours
 
 
 # ============================================================
@@ -2699,6 +2926,49 @@ def build_json_unified(current, unified_data):
 
 
 # ============================================================
+# Planetary Hours output
+# ============================================================
+
+def _format_hours_human(hours, d, system="chaldean"):
+    """Format planetary hours as human-readable text."""
+    wd = d.weekday()
+    day_name = WEEKDAY_NAMES[wd]
+    ruler = DAY_RULERS[wd]
+    lines = []
+    lines.append(f"{day_name}, {d} — Caraguatatuba ({system})")
+    lines.append(f"Day ruler: {ruler}")
+    if hours:
+        lines.append(f"Sunrise: {hours[0]['start']}  |  Sunset: {hours[11]['end']}")
+    lines.append("")
+
+    def ordinal(n):
+        if 11 <= n % 100 <= 13:
+            return f"{n}th"
+        return {1: f"{n}st", 2: f"{n}nd", 3: f"{n}rd"}.get(n % 10, f"{n}th")
+
+    for h in hours:
+        ord_str = ordinal(h["hour"])
+        sym = h["symbol"]
+        lines.append(
+            f"  {ord_str:>3}  {h['start']}-{h['end']}  {h['planet']:8s} {sym} {h['activity']}"
+        )
+
+    jupiter_hours = [h for h in hours if h["planet"] == "Jupiter"]
+    venus_hours = [h for h in hours if h["planet"] == "Venus"]
+    mercury_hours = [h for h in hours if h["planet"] == "Mercury"]
+    lines.append("")
+    lines.append("  Best windows:")
+    for p, label in [("Jupiter", "LUCK/SERENDIPITY"), ("Venus", "ROMANCE/SOCIAL"),
+                     ("Mercury", "CONNECT/CHAT")]:
+        windows = [h for h in hours if h["planet"] == p]
+        if windows:
+            times = ", ".join(f"{h['start']}-{h['end']}" for h in windows)
+            lines.append(f"    {p:8s} ({label}): {times}")
+
+    return "\n".join(lines)
+
+
+# ============================================================
 # Main
 # ============================================================
 
@@ -2731,6 +3001,16 @@ def main():
                              "Use 'all' for all systems. Implies --full output. "
                              "Available: 9sk,sex,alk,vedic,chinese,hebrew,mayan,celtic,islamic,aztec,"
                              "persian,egyptian,hindu,javanese,saka-india,saka-bali,decan,wavespell")
+    parser.add_argument("--hours", action="store_true", default=False,
+                        help="Output 24 planetary hours for today (or date range with --start/--end)")
+    parser.add_argument("--lat", type=float, default=DEFAULT_LAT,
+                        help=f"Latitude for sunrise/sunset (default: {DEFAULT_LAT})")
+    parser.add_argument("--lon", type=float, default=DEFAULT_LON,
+                        help=f"Longitude for sunrise/sunset (default: {DEFAULT_LON})")
+    parser.add_argument("--tz", type=float, default=DEFAULT_TZ,
+                        help=f"Timezone offset from UTC (default: {DEFAULT_TZ})")
+    parser.add_argument("--system", default="chaldean", choices=PLANETARY_HOUR_SYSTEMS,
+                        help="Planetary hour system: chaldean, vedic, al-biruni, or egyptian (default: chaldean)")
     args = parser.parse_args()
 
     # Parse --systems into a set
@@ -2752,9 +3032,9 @@ def main():
             args.full = True
 
     # Output modes are mutually exclusive
-    active_modes = [args.full, args.main_cycles, args.astro]
+    active_modes = [args.full, args.main_cycles, args.astro, args.hours]
     if sum(active_modes) > 1:
-        parser.error("--full, --main-cycles, and --astro are mutually exclusive")
+        parser.error("--full, --main-cycles, --astro, and --hours are mutually exclusive")
 
     if args.astro and not HAS_EPHEM:
         parser.error("--astro requires the 'ephem' package: pip install ephem")
@@ -2773,7 +3053,7 @@ def main():
         out = sys.stdout
 
     # Header (skip for JSON and human — output is structured)
-    if not args.json and not args.human:
+    if not args.json and not args.human and not args.hours:
         out.write("# YOSOY Calendar Systems - Pre-Computed Daily Data\n")
         if args.astro:
             out.write("# Format: Gregorian(Full/Planet date) | Sun | Moon | Mercury | Venus | Mars | Jupiter | Saturn | Aspects | Flags\n")
@@ -2812,6 +3092,21 @@ def main():
         flags, flags_field, alk_result = compute_flags(current, is_dot)
 
         # --- Mode-specific parts ---
+        if args.hours:
+            hours = compute_planetary_hours(current, args.lat, args.lon, args.tz, args.system)
+            if args.json:
+                json_results.append({
+                    "date": current.isoformat(),
+                    "system": args.system,
+                    "day_ruler": DAY_RULERS[current.weekday()],
+                    "hours": hours,
+                })
+            else:
+                out.write(_format_hours_human(hours, current, args.system) + "\n")
+            current = current + timedelta(days=1)
+            count = count + 1
+            continue
+
         full_data = None
         astro_data = None
         if args.astro:
