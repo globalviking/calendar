@@ -751,7 +751,7 @@ def compute_13moon(d):
     weekday_name = MOON_13_WEEKDAYS[weekday_idx]
     month_name = MOON_13_MONTH_NAMES[month - 1]
 
-    return "13M:" + month_name + str(month) + "d" + str(day_in_month) + " " + weekday_name
+    return "13M:" + month_name + str(month) + "d" + str(day_in_month) + "/28 " + weekday_name
 
 
 def compute_alkhemia(d):
@@ -1437,7 +1437,7 @@ def compute_celtic_tree(d):
     tree_abbr = CELTIC_TREE_ABBR[month_idx]
     tree_name = CELTIC_TREE_NAMES[month_idx]
 
-    return "Cel:" + tree_abbr + "/d" + str(day_in_month) + " " + tree_name.split("/")[1]
+    return "Cel:" + tree_abbr + "/d" + str(day_in_month) + "/28 " + tree_name.split("/")[1]
 
 
 # ============================================================
@@ -2036,8 +2036,8 @@ def _format_compact_human(parts):
 
 
 def _format_main_cycles_human(parts):
-    """Format main-cycles mode (9 parts) as human-readable lines."""
-    # parts: wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase, flags_field
+    """Format main-cycles mode (10 parts) as human-readable lines."""
+    # parts: wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, celtic_28, moon_phase, flags_field
     wd = parts[0]
     wd_parts = wd.split(" ")
     weekday_full = wd_parts[0].split("/")[0] if "/" in wd_parts[0] else wd_parts[0]
@@ -2068,16 +2068,20 @@ def _format_main_cycles_human(parts):
     _, val = _strip_prefix(parts[5])
     lines.append("  12-Mo Atlantean:" + val)
 
-    # 13-month Moon
+    # 13-month 13-Moon (28-day months)
     _, val = _strip_prefix(parts[6])
     lines.append("  13-Mo 13Moon:   " + val)
 
-    # Moon phase
+    # 28-day Celtic Tree
     _, val = _strip_prefix(parts[7])
+    lines.append("  28-Day Celtic:  " + val)
+
+    # Moon phase
+    _, val = _strip_prefix(parts[8])
     lines.append("  Moon:           " + val)
 
     # Flags
-    _, val = _strip_prefix(parts[8])
+    _, val = _strip_prefix(parts[9])
     if val != "---":
         lines.append("  Flags:          " + val)
 
@@ -2218,9 +2222,12 @@ def compute_main_cycles_parts(current, wd_field, is_dot, moon_phase):
         m13_tone_name = m13_tone[0]
         m13_power = m13_tone[1]
         m13_action = m13_tone[2]
-        moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/" + m13_tone_name + "/" + m13_power + "/" + m13_action
+        moon13_month = "13M:M" + str(m13_month) + "/d" + str(m13_day_in) + "/28/" + m13_tone_name + "/" + m13_power + "/" + m13_action
 
-    parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, moon_phase]
+    # 28-day: Celtic Tree month (13×28, same structure as 13-Moon)
+    celtic_28 = compute_celtic_tree(current)
+
+    parts = [wd_field, seven_day, decan, wavespell, zod_month, atl_month, moon13_month, celtic_28, moon_phase]
 
     cycle_data = {
         "planet_ruler": planet_ruler,
@@ -2245,6 +2252,7 @@ def compute_main_cycles_parts(current, wd_field, is_dot, moon_phase):
         "m13_tone_name": m13_tone_name,
         "m13_power": m13_power,
         "m13_action": m13_action,
+        "celtic_28": celtic_28,
     }
 
     return parts, cycle_data
@@ -2333,10 +2341,13 @@ def build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags):
         entry["13month_moon"] = {
             "month": cycle_data["m13_month"],
             "day_in_month": cycle_data["m13_day_in"],
+            "days_in_month": 28,
             "tone": cycle_data["m13_tone_name"],
             "power": cycle_data["m13_power"],
             "action": cycle_data["m13_action"],
         }
+
+    entry["28day_celtic"] = cycle_data["celtic_28"]
 
     # Parse moon phase: "Moon:FullMoon(99%) Cap\u2651"
     mp = moon_phase.replace("Moon:", "")
