@@ -1993,9 +1993,9 @@ def _strip_prefix(field):
     return "", field
 
 
-def _format_compact_human(parts):
-    """Format compact mode (7 parts) as human-readable lines."""
-    # parts: wd_field, atl_field, zod, season, moon13, moon_phase, flags_field
+def _format_overview_human(parts):
+    """Format overview mode (7 parts) as human-readable lines."""
+    # parts: wd_field, atl_field, zod, moon13, moon_phase, season, flags_field
     wd = parts[0]
     # "Tuesday/Mars 2026-06-30"
     wd_parts = wd.split(" ")
@@ -2015,17 +2015,17 @@ def _format_compact_human(parts):
     _, zod_val = _strip_prefix(parts[2])
     lines.append("  Zodiac:     " + zod_val)
 
-    # Season
-    _, sea_val = _strip_prefix(parts[3])
-    lines.append("  Season:     " + sea_val)
-
     # 13-Moon
-    _, m13_val = _strip_prefix(parts[4])
+    _, m13_val = _strip_prefix(parts[3])
     lines.append("  13-Moon:    " + m13_val)
 
     # Moon phase
-    _, moon_val = _strip_prefix(parts[5])
+    _, moon_val = _strip_prefix(parts[4])
     lines.append("  Moon:       " + moon_val)
+
+    # Season (last data field)
+    _, sea_val = _strip_prefix(parts[5])
+    lines.append("  Season:     " + sea_val)
 
     # Flags
     _, flag_val = _strip_prefix(parts[6])
@@ -2088,7 +2088,7 @@ def _format_main_cycles_human(parts):
     return "\n".join(lines)
 
 
-# Human-readable labels for full-mode fields (in order after the 6 compact fields)
+# Human-readable labels for full-mode fields (in order after the 6 overview fields)
 _FULL_LABELS = [
     "9 Star Ki", "Sexagenary", "Alkhemia", "Vedic", "Chinese Lunar",
     "Hebrew", "Mayan", "Celtic Tree", "Islamic", "Aztec",
@@ -2100,17 +2100,17 @@ _FULL_LABELS = [
 def _format_full_human(parts, ordered_labels=None):
     """Format full mode as human-readable lines.
 
-    ordered_labels: list of label strings for the full-mode fields (after compact 6).
+    ordered_labels: list of label strings for the full-mode fields (after overview 6).
     If None, uses the default _FULL_LABELS for backward compatibility.
     """
     if ordered_labels is None:
         ordered_labels = _FULL_LABELS
 
     num_full = len(ordered_labels)
-    # First 6 are compact fields, then num_full full-only, then flags at the end
+    # First 6 are overview fields, then num_full full-only, then flags at the end
     lines = []
-    # Reuse compact formatting for first 6 fields (flags is at end, so pass dummy)
-    lines.append(_format_compact_human(parts[:6] + ["Flags:---"]))
+    # Reuse overview formatting for first 6 fields (flags is at end, so pass dummy)
+    lines.append(_format_overview_human(parts[:6] + ["Flags:---"]))
     lines.append("")
     lines.append("  " + "~" * 40)
     for i in range(num_full):
@@ -2133,7 +2133,7 @@ def format_human(parts, args, ordered_labels=None):
     elif args.full:
         return _format_full_human(parts, ordered_labels)
     else:
-        return _format_compact_human(parts)
+        return _format_overview_human(parts)
 
 
 def compute_flags(current, is_dot):
@@ -2148,7 +2148,7 @@ def compute_flags(current, is_dot):
         flags.append(nada)
     if is_dot:
         flags.append("DOT")
-    # Always check for eclipses (even in compact mode)
+    # Always check for eclipses (even in overview mode)
     alk_result, alk_eclipse = compute_alkhemia(current)
     if alk_eclipse and "ECLIPSE:" in alk_result:
         eclipse_name = alk_result.split("ECLIPSE:")[1]
@@ -2360,16 +2360,16 @@ def build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags):
     return entry
 
 
-def build_json_compact_or_full(current, args, wd_field, atl_field, zod, season, moon13,
+def build_json_overview_or_full(current, args, wd_field, atl_field, zod, season, moon13,
                                moon_phase, full_data, flags):
-    """Build a JSON entry dict for compact or --full mode."""
+    """Build a JSON entry dict for overview or --full mode."""
     entry = {"date": current.isoformat()}
     entry["weekday"] = wd_field
     entry["atlantean"] = atl_field
     entry["zodiac"] = zod
-    entry["season"] = season
     entry["13moon"] = moon13
     entry["moon_phase"] = moon_phase
+    entry["season"] = season
     if args.full and full_data:
         # JSON key names for each system
         json_keys = {
@@ -2500,11 +2500,11 @@ def main():
     parser.add_argument("--hemisphere", default="south", choices=["north", "south", "both"],
                         help="Hemisphere for seasons: north, south, or both (default: south)")
     parser.add_argument("--full", action="store_true", default=False,
-                        help="Output all calendar systems (default: compact 7-field output)")
+                        help="Output all calendar systems (default: overview 6-field subset)")
     parser.add_argument("--main-cycles", action="store_true", default=False,
                         help="Output only the main cycle fields: 7-day(Planet), 10-day(Decan), 13-day(Wavespell), 12-month(Zodiac+Atlantean), 13-month(13Moon), Moon phase")
     parser.add_argument("--json", action="store_true", default=False,
-                        help="Output as JSON array (works with --main-cycles, --full, or compact)")
+                        help="Output as JSON array (works with --main-cycles, --full, or overview)")
     parser.add_argument("--today", action="store_true", default=False,
                         help="Output only today's date (overrides --start/--end)")
     parser.add_argument("-H", "--human", action="store_true", default=False,
@@ -2566,7 +2566,7 @@ def main():
             out.write("# Format: Gregorian(Full/Planet date) | 7day:Planet | 10day:Decan | 13day:Wavespell | 12Z:ZodiacMonth | 12A:AtlanteanMonth | 13M:13MoonMonth | Moon | Flags\n")
         elif args.full:
             if selected_systems is None:
-                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
+                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | 13Moon | Moon | Season | 9SK | Sexagenary | Alkhemia | Vedic | ChineseLunar | Hebrew | Mayan | Celtic | Islamic | Aztec | Persian | Egyptian | Hindu | Javanese | SakaIndia | SakaBali | Decan | Wavespell | Flags\n")
             else:
                 # Dynamic header based on selected systems
                 all_labels = {"9sk":"9SK","sex":"Sexagenary","alk":"Alkhemia","vedic":"Vedic",
@@ -2575,9 +2575,9 @@ def main():
                     "hindu":"Hindu","javanese":"Javanese","saka-india":"SakaIndia",
                     "saka-bali":"SakaBali","decan":"Decan","wavespell":"Wavespell"}
                 sys_names = [all_labels[k] for k in sorted(selected_systems)]
-                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | " + " | ".join(sys_names) + " | Flags\n")
+                out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | 13Moon | Moon | Season | " + " | ".join(sys_names) + " | Flags\n")
         else:
-            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | Season | 13Moon | Moon | Flags\n")
+            out.write("# Format: Gregorian(Full/Planet date) | Atlantean(+Hol) | Zodiac | 13Moon | Moon | Season | Flags\n")
 
     json_results = []
     current = start
@@ -2604,10 +2604,10 @@ def main():
         elif args.main_cycles:
             parts, cycle_data = compute_main_cycles_parts(current, wd_field, is_dot, moon_phase)
         elif args.full:
-            base_parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
+            base_parts = [wd_field, atl_field, zod, moon13, moon_phase, season]
             parts, full_data, ordered_labels = compute_full_parts(current, is_dot, alk_result, base_parts, selected_systems)
         else:
-            parts = [wd_field, atl_field, zod, season, moon13, moon_phase]
+            parts = [wd_field, atl_field, zod, moon13, moon_phase, season]
 
         if not args.astro:
             parts.append(flags_field)
@@ -2619,7 +2619,7 @@ def main():
             elif args.main_cycles:
                 entry = build_json_main_cycles(current, wd_field, cycle_data, moon_phase, flags)
             else:
-                entry = build_json_compact_or_full(current, args, wd_field, atl_field, zod,
+                entry = build_json_overview_or_full(current, args, wd_field, atl_field, zod,
                                                    season, moon13, moon_phase, full_data, flags)
             json_results.append(entry)
         elif args.human:
