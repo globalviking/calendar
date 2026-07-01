@@ -3,12 +3,12 @@
 calendar_data_gen.py - Generate pre-computed daily calendar data for YOSOY framework.
 
 Computes 26+ calendar systems for each day and outputs pipe-delimited, JSON, or
-human-readable data. Uses PyEphem for accurate planetary positions (--astro mode)
+human-readable data. Uses Skyfield for accurate planetary positions (--astro mode)
 and sunrise/sunset (--hours mode).
 
 Usage: python3 calendar_data_gen.py [--start YYYY-MM-DD] [--end YYYY-MM-DD] [-o OUTPUT_FILE]
        python3 calendar_data_gen.py --today [-H|--json|--full|--main-cycles|--astro|--hours]
-       python3 calendar_data_gen.py --today --hours [--system chaldean|vedic|al-biruni|egyptian] [--lat L] [--lon L] [--tz T]
+       python3 calendar_data_gen.py --today --hours [chaldean|vedic|al-biruni|egyptian|hellenistic|tibetan|ethiopian|compare] [--lat L] [--lon L] [--tz T]
 """
 
 import argparse
@@ -17,13 +17,16 @@ import math
 import sys
 from datetime import date, timedelta
 
-# PyEphem for accurate planetary positions (--astro mode)
-# Graceful fallback: if ephem is not installed, --astro mode is disabled
+# Skyfield for accurate planetary positions (--astro mode) and sunrise/sunset (--hours mode)
+# Graceful fallback: if skyfield is not installed, --astro and --hours modes are disabled
 try:
-    import ephem
-    HAS_EPHEM = True
-except ImportError:
-    HAS_EPHEM = False
+    from skyfield.api import load, wgs84
+    from skyfield.framelib import ecliptic_frame as skyfield_ecliptic_frame
+    _ts = load.timescale()
+    _eph = load('de421.bsp')
+    HAS_SKYFIELD = True
+except (ImportError, OSError):
+    HAS_SKYFIELD = False
 
 
 # ============================================================
@@ -64,7 +67,31 @@ DEFAULT_LON = -45.41
 DEFAULT_TZ = -3  # UTC-3
 
 # Supported planetary hour systems
-PLANETARY_HOUR_SYSTEMS = ["chaldean", "vedic", "al-biruni", "egyptian"]
+PLANETARY_HOUR_SYSTEMS = ["chaldean", "vedic", "al-biruni", "egyptian", "hellenistic", "tibetan", "ethiopian"]
+
+# Hellenistic: day starts at sunset (Vettius Valens tradition).
+# The 1st hour of the day = 1st hour after sunset.
+# Day ruler = planet of that 1st hour. Weekday changes at sunset.
+# Same Chaldean order, but shifted by ~12 hours.
+
+# Tibetan: 28 Nakshatras (lunar mansions), each ruled by a planet.
+# 7 planets × 4 Nakshatras each. Day ruler from the current Nakshatra.
+# Hour sequence follows Chaldean order from that starting point.
+TIBETAN_NAKSHATRA_RULERS = {
+    "Ashwini": "Mars", "Bharani": "Venus", "Krittika": "Sun",
+    "Rohini": "Moon", "Mrigashira": "Mars", "Ardra": "Saturn",
+    "Punarvasu": "Jupiter", "Pushya": "Saturn", "Ashlesha": "Mercury",
+    "Magha": "Mars", "PurvaPhalguni": "Venus", "UttaraPhalguni": "Sun",
+    "Hasta": "Moon", "Chitra": "Mars", "Swati": "Saturn",
+    "Vishakha": "Jupiter", "Anuradha": "Saturn", "Jyeshtha": "Mercury",
+    "Mula": "Mars", "PurvaAshadha": "Venus", "UttaraAshadha": "Sun",
+    "Shravana": "Moon", "Dhanishta": "Mars", "Shatabhisha": "Saturn",
+    "PurvaBhadra": "Jupiter", "UttaraBhadra": "Saturn", "Revati": "Mercury",
+}
+
+# Ethiopian/Alexandrian: Same Chaldean order, but the week cycle
+# starts from the Coptic epoch (Thoth 1 = Aug 29, 284 CE).
+# The day ruler is offset by the Coptic year cycle.
 
 # Activity recommendations for each planet (daytime)
 PLANETARY_HOUR_ACTIVITIES_DAY = {
@@ -677,9 +704,13 @@ PERSIAN_LEAP_YEARS_IN_CYCLE = [1, 5, 9, 13, 17, 22, 26, 30]
 # Days in a 33-year cycle: 25*365 + 8*366 = 9125 + 2928 = 12053
 
 
-# ============================================================
-# Calendar computation functions
-# ============================================================
+# Convertdate for authoritative calendar conversions (Hebrew, Islamic, Mayan, Persian)
+# Graceful fallback: if convertdate is not installed, use manual implementations
+try:
+    import convertdate
+    HAS_CONVERTDATE = True
+except ImportError:
+    HAS_CONVERTDATE = False
 
 def to_julian_day(d):
     """Convert a Python date to Julian Day number (integer)."""
@@ -706,13 +737,20 @@ def elem_emoji(element_name):
 def solar_longitude(d):
     """Compute the Sun's tropical longitude in degrees for date d.
 
-    Uses a simplified solar model: mean longitude + equation of center.
+    Uses Skyfield with DE421 ephemeris for accurate position.
     This is the single source of truth — previously duplicated 6x.
     """
+    if HAS_SKYFIELD:
+        t = _ts.utc(d.year, d.month, d.day)
+        sun = _eph['Sun']
+        pos = sun.at(t)
+        _lat, lon, _dist = pos.frame_latlon(skyfield_ecliptic_frame)
+        return lon.degrees % 360.0
+    # Fallback: simplified solar model (mean longitude + equation of center)
     jd = to_julian_day(d)
-    t = (jd - 2451545.0) / 36525.0
-    l0 = 280.460 + 36000.770 * t
-    m = 357.528 + 35999.050 * t
+    t_val = (jd - 2451545.0) / 36525.0
+    l0 = 280.460 + 36000.770 * t_val
+    m = 357.528 + 35999.050 * t_val
     m_rad = math.radians(m)
     c = 1.915 * math.sin(m_rad) + 0.020 * math.sin(2 * m_rad)
     return (l0 + c) % 360.0
@@ -724,12 +762,56 @@ def solar_sidereal_longitude(d):
     return (solar_longitude(d) - lahiri_ayanamsa(jd)) % 360.0
 
 
-def nearest_new_moon(d):
-    """Find the most recent past new moon reference date for date d.
+def moon_sidereal_longitude(d):
+    """Compute the Moon's sidereal longitude in degrees.
 
-    Returns the MOON_REFERENCE_DATES entry closest to but not after d.
-    This is the single source of truth — previously duplicated 4x.
+    Uses Skyfield when available for accuracy. Falls back to an
+    approximate model: moon moves ~13.176 deg/day from new moon.
     """
+    if HAS_SKYFIELD:
+        t = _ts.utc(d.year, d.month, d.day)
+        earth = _eph['Earth']
+        moon = _eph['Moon']
+        moon_pos = (moon - earth).at(t)
+        _lat, lon, _dist = moon_pos.frame_latlon(skyfield_ecliptic_frame)
+        jd = to_julian_day(d)
+        return (lon.degrees - lahiri_ayanamsa(jd)) % 360.0
+    # Fallback: approximate from new moon
+    ref = nearest_new_moon(d)
+    days_since_ref = (d - ref).days
+    sun_sid = solar_sidereal_longitude(d)
+    return (sun_sid + 13.176396 * days_since_ref) % 360.0
+
+
+def nearest_new_moon(d):
+    """Find the most recent past new moon date for date d using Skyfield.
+
+    Searches back up to 35 days to find the day with minimum
+    Sun-Moon elongation (closest to 0° = new moon).
+    Returns a datetime.date.
+    """
+    if HAS_SKYFIELD:
+        earth = _eph['Earth']
+        moon = _eph['Moon']
+        sun = _eph['Sun']
+        best_date = d
+        best_elong = 999.0
+        for days_back in range(0, 35):
+            check = d - timedelta(days=days_back)
+            t = _ts.utc(check.year, check.month, check.day)
+            # Geocentric positions
+            moon_pos = (moon - earth).at(t)
+            _, moon_lon, _ = moon_pos.frame_latlon(skyfield_ecliptic_frame)
+            sun_pos = (sun - earth).at(t)
+            _, sun_lon, _ = sun_pos.frame_latlon(skyfield_ecliptic_frame)
+            elong = (moon_lon.degrees - sun_lon.degrees) % 360.0
+            if elong > 180:
+                elong = 360.0 - elong
+            if elong < best_elong:
+                best_elong = elong
+                best_date = check
+        return best_date
+    # Fallback: use reference date table
     ref = MOON_REFERENCE_DATES[0]
     for r in MOON_REFERENCE_DATES:
         if r <= d:
@@ -854,7 +936,41 @@ def compute_hol(d):
 
 
 def compute_moon_phase(d):
-    """Compute approximate moon phase and illumination for date d."""
+    """Compute moon phase and illumination for date d using Skyfield."""
+    if HAS_SKYFIELD:
+        earth = _eph['Earth']
+        moon = _eph['Moon']
+        sun = _eph['Sun']
+        t = _ts.utc(d.year, d.month, d.day)
+        # Geocentric positions
+        moon_pos = (moon - earth).at(t)
+        _, moon_lon, _ = moon_pos.frame_latlon(skyfield_ecliptic_frame)
+        sun_pos = (sun - earth).at(t)
+        _, sun_lon, _ = sun_pos.frame_latlon(skyfield_ecliptic_frame)
+        elong = (moon_lon.degrees - sun_lon.degrees) % 360.0
+        # Phase from elongation (0=new, 90=1Q, 180=full, 270=3Q)
+        if elong < 6 or elong >= 354:
+            phase = "NewMoon"
+        elif elong < 84:
+            phase = "WaxCres"
+        elif elong < 96:
+            phase = "1stQtr"
+        elif elong < 174:
+            phase = "WaxGib"
+        elif elong < 186:
+            phase = "FullMoon"
+        elif elong < 264:
+            phase = "WanGib"
+        elif elong < 276:
+            phase = "LastQtr"
+        elif elong < 354:
+            phase = "WanCres"
+        else:
+            phase = "DarkMoon"
+        # Illumination: (1 - cos(elong)) / 2
+        illum_pct = int(round((1.0 - math.cos(math.radians(elong))) / 2.0 * 100))
+        return "Moon:" + phase + "(" + str(illum_pct) + "%)"
+    # Fallback: approximate from reference dates
     ref = nearest_new_moon(d)
     days_since = (d - ref).days
     moon_age = days_since % 29.53
@@ -885,25 +1001,28 @@ def compute_moon_phase(d):
 
 
 def compute_moon_zodiac(d):
-    """Compute the tropical zodiac sign of the Moon for date d.
+    """Compute the tropical zodiac sign of the Moon for date d using Skyfield.
 
-    Uses solar_longitude() + 13.176°/day lunar displacement from the
-    nearest new moon reference date.
-
-    Returns a string like 'Cap\\u2651' (abbreviated sign name + symbol).
+    Returns a string like 'Cap♑' (abbreviated sign name + symbol).
     """
-    sun_tropical = solar_longitude(d)
-    ref = nearest_new_moon(d)
-    days_since_ref = (d - ref).days
-
-    # Moon's tropical longitude ≈ Sun's longitude + 13.176°/day × days since new moon
-    # At new moon, Moon ≈ Sun (elongation = 0)
-    moon_tropical = (sun_tropical + 13.176396 * days_since_ref) % 360.0
+    if HAS_SKYFIELD:
+        earth = _eph['Earth']
+        moon = _eph['Moon']
+        t = _ts.utc(d.year, d.month, d.day)
+        # Geocentric Moon position
+        moon_pos = (moon - earth).at(t)
+        _, moon_lon, _ = moon_pos.frame_latlon(skyfield_ecliptic_frame)
+        moon_tropical = moon_lon.degrees % 360.0
+    else:
+        # Fallback: approximate from solar longitude + lunar displacement
+        sun_tropical = solar_longitude(d)
+        ref = nearest_new_moon(d)
+        days_since_ref = (d - ref).days
+        moon_tropical = (sun_tropical + 13.176396 * days_since_ref) % 360.0
 
     sign_idx = int(moon_tropical // 30.0) % 12
     abbr = MOON_ZODIAC_ABBR[sign_idx]
     sym = TROPICAL_ZODIAC_SYMBOLS[sign_idx]
-
     return abbr + sym
 
 
@@ -916,34 +1035,31 @@ def _sunrise_sunset(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ):
 
     Returns (sunrise, sunset) as naive datetime objects in local time.
 
-    Uses PyEphem when available for accuracy. Falls back to a
+    Uses Skyfield when available for accuracy. Falls back to a
     mathematical approximation (good to ~2 min) otherwise.
     """
     from datetime import datetime, timedelta, timezone
 
-    if HAS_EPHEM:
-        obs = ephem.Observer()
-        obs.lat = str(lat)
-        obs.lon = str(lon)
-        obs.date = ephem.Date(d)
+    if HAS_SKYFIELD:
+        # Use Skyfield for accurate sunrise/sunset
+        loc = wgs84.latlon(lat, lon)
+        t0 = _ts.utc(d.year, d.month, d.day)
+        sun = _eph['Sun']
         try:
-            sr = obs.next_rising(ephem.Sun())
-            ss = obs.next_setting(ephem.Sun())
-            sr_dt = sr.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
-            ss_dt = ss.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+            sr_time = sun.rise_at(t0, loc)
+            ss_time = sun.set_at(t0, loc)
+            sr_dt = sr_time.utc_datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+            ss_dt = ss_time.utc_datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
             if ss_dt.date() > d and sr_dt.date() <= d:
-                obs2 = ephem.Observer()
-                obs2.lat = str(lat)
-                obs2.lon = str(lon)
-                obs2.date = ephem.Date(d) - 0.5
-                ss2 = obs2.next_setting(ephem.Sun())
-                ss_dt = ss2.datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
+                # Sunset is on the next day — get previous day's sunset
+                t_prev = _ts.utc(d.year, d.month, d.day - 1)
+                ss_time = sun.set_at(t_prev, loc)
+                ss_dt = ss_time.utc_datetime().replace(tzinfo=timezone.utc) + timedelta(hours=tz)
             return sr_dt.replace(tzinfo=None), ss_dt.replace(tzinfo=None)
         except Exception:
             pass
 
     # Mathematical fallback (accurate to ~2 minutes)
-    import math
     doy = d.timetuple().tm_yday
     decl = 23.44 * math.sin(math.radians(360.0 / 365 * (doy - 81)))
     try:
@@ -987,13 +1103,20 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
           - 'symbol': planet unicode symbol
           - 'period': "day" or "night"
           - 'activity': recommendation string
+          - 'nakshatra': (tibetan only) Nakshatra name
 
     Systems:
-        chaldean  — Saturn→Jupiter→Mars→Sun→Venus→Mercury→Moon, 1st hour = day ruler, night continues cycle
-        vedic     — Sun→Venus→Mercury→Moon→Saturn→Jupiter→Mars, 1st hour = day ruler, night continues cycle
-        al-biruni — Same Chaldean order, but night RESTARTS from day ruler
-        egyptian  — Hour ruler from 36-decan cycle (DECAN_CHALDEAN_RULERS),
-                    not the 7-planet cycle. Fundamentally different pattern.
+        chaldean    — Saturn→Jupiter→Mars→Sun→Venus→Mercury→Moon, 1st hour = day ruler, night continues cycle
+        vedic       — Sun→Venus→Mercury→Moon→Saturn→Jupiter→Mars, 1st hour = day ruler, night continues cycle
+        al-biruni   — Same Chaldean order, but night RESTARTS from day ruler
+        egyptian    — Hour ruler from 36-decan cycle (DECAN_CHALDEAN_RULERS),
+                      not the 7-planet cycle. Fundamentally different pattern.
+        hellenistic — Day starts at sunset (Vettius Valens). 1st hour = 1st hour after sunset.
+                      Day ruler = planet of that hour. Same Chaldean order, shifted by ~12h.
+        tibetan     — Day ruler from the current Nakshatra (lunar mansion) via moon's
+                      sidereal longitude. Hour sequence follows Chaldean order from that ruler.
+        ethiopian   — Same Chaldean order, but week cycle starts from Coptic epoch
+                      (Thoth 1 = Aug 29, 284 CE). Different day rulers than Gregorian weekday.
 
     Day hours (sunrise to sunset) and night hours (sunset to next sunrise) have
     different durations based on actual day/night length.
@@ -1015,6 +1138,7 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
 
     wd = d.weekday()
     ruler = DAY_RULERS[wd]
+    nakshatra_name = None  # Only set for tibetan system
 
     if system == "vedic":
         order = VEDIC_ORDER
@@ -1041,6 +1165,53 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
         day_planets = all_decan_planets[:12]
         night_planets = all_decan_planets[12:]
 
+    elif system == "hellenistic":
+        # Day starts at sunset. 1st hour = 1st hour after sunset.
+        # Day ruler = planet of that 1st hour. Weekday changes at sunset.
+        # Same Chaldean order, but shifted: "day" hours = sunset→sunrise,
+        # "night" hours = sunrise→sunset.
+        order = CHALDEAN_ORDER
+        # The 1st hour after sunset = hour 13 in sunrise-start Chaldean
+        ruler_idx = order.index(ruler)
+        sunset_hour_idx = (ruler_idx + 12) % 7
+        # Hellenistic day ruler = planet of 1st hour after sunset
+        # Day hours (sunset→sunrise) start from hellenistic_ruler
+        day_planets = [order[(sunset_hour_idx + i) % 7] for i in range(12)]
+        # Night hours (sunrise→sunset) continue the cycle
+        night_planets = [order[(sunset_hour_idx + 12 + j) % 7] for j in range(12)]
+
+    elif system == "tibetan":
+        # Day ruler from the current Nakshatra (lunar mansion).
+        # Compute moon's sidereal longitude to find the Nakshatra.
+        moon_sid = moon_sidereal_longitude(d)
+        nakshatra_idx = int(moon_sid // (360.0 / 28)) % 28
+        # Tibetan uses 28 Nakshatras; the 28th (Abhijit) falls between
+        # UttaraAshadha and Shravana. Insert Abhijit at position 21.
+        tibetan_nakshatras = list(VEDIC_NAKSHATRAS)
+        tibetan_nakshatras.insert(21, "Abhijit")
+        nakshatra_name = tibetan_nakshatras[nakshatra_idx]
+        nakshatra_ruler = TIBETAN_NAKSHATRA_RULERS.get(nakshatra_name, "Mercury")
+        order = CHALDEAN_ORDER
+        ruler_idx = order.index(nakshatra_ruler)
+        day_planets = [order[(ruler_idx + i) % 7] for i in range(12)]
+        night_planets = [order[(ruler_idx + 12 + j) % 7] for j in range(12)]
+
+    elif system == "ethiopian":
+        # Same Chaldean order, but week cycle starts from Coptic epoch.
+        # Thoth 1 = Aug 29, 284 CE was a Sunday.
+        # Compute the Coptic weekday offset from that epoch.
+        coptic_epoch = date(284, 8, 29)
+        days_since_epoch = (d - coptic_epoch).days
+        coptic_weekday = days_since_epoch % 7  # 0=Sunday
+        # Map Coptic weekday (0=Sun) to our DAY_RULERS (0=Mon)
+        coptic_to_ruler = [6, 0, 1, 2, 3, 4, 5]  # Sun→index 6, Mon→0, etc.
+        ethiopian_ruler_idx = coptic_to_ruler[coptic_weekday]
+        ethiopian_ruler = DAY_RULERS[ethiopian_ruler_idx]
+        order = CHALDEAN_ORDER
+        ruler_idx = order.index(ethiopian_ruler)
+        day_planets = [order[(ruler_idx + i) % 7] for i in range(12)]
+        night_planets = [order[(ruler_idx + 12 + j) % 7] for j in range(12)]
+
     else:  # chaldean (default)
         order = CHALDEAN_ORDER
         ruler_idx = order.index(ruler)
@@ -1060,6 +1231,7 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
             "symbol": PLANETARY_SYMBOLS.get(planet, ""),
             "period": "day",
             "activity": PLANETARY_HOUR_ACTIVITIES_DAY.get(planet, ""),
+            "nakshatra": nakshatra_name if system == "tibetan" else None,
         })
 
     for j in range(12):
@@ -1074,44 +1246,54 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
             "symbol": PLANETARY_SYMBOLS.get(planet, ""),
             "period": "night",
             "activity": PLANETARY_HOUR_ACTIVITIES_NIGHT.get(planet, ""),
+            "nakshatra": nakshatra_name if system == "tibetan" else None,
         })
 
     return hours
 
 
 # ============================================================
-# Astrology mode — planetary positions via PyEphem
+# Astrology mode — planetary positions via Skyfield
 # ============================================================
 
-# Planet symbols and ephem classes
-ASTRO_PLANETS = [
-    ("Sun", "\u2609", ephem.Sun),
-    ("Moon", "\u263d", ephem.Moon),
-    ("Mercury", "\u263f", ephem.Mercury),
-    ("Venus", "\u2640", ephem.Venus),
-    ("Mars", "\u2642", ephem.Mars),
-    ("Jupiter", "\u2643", ephem.Jupiter),
-    ("Saturn", "\u2644", ephem.Saturn),
+# Planet names and their Skyfield body references
+ASTRO_PLANET_NAMES = [
+    "Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
 ]
+ASTRO_PLANET_SYMBOLS = {
+    "Sun": "\u2609",
+    "Moon": "\u263d",
+    "Mercury": "\u263f",
+    "Venus": "\u2640",
+    "Mars": "\u2642",
+    "Jupiter": "\u2643",
+    "Saturn": "\u2644",
+}
 
 
-def _planet_ecliptic_lon(p, d):
-    """Compute ecliptic longitude in degrees for a planet on date d."""
-    obs = ephem.Observer()
-    obs.date = ephem.Date(d)
-    p.compute(obs)
-    return ephem.Ecliptic(p).lon * 180.0 / math.pi
+def _planet_ecliptic_lon(name, d):
+    """Compute ecliptic longitude in degrees for a planet on date d using Skyfield."""
+    t = _ts.utc(d.year, d.month, d.day)
+    # DE421: Sun, Moon, Mercury, Venus, Mars work directly;
+    # Jupiter, Saturn need BARYCENTER suffix
+    if name in ("Jupiter", "Saturn"):
+        body = _eph[name.upper() + " BARYCENTER"]
+    else:
+        body = _eph[name]
+    pos = body.at(t)
+    _lat, ecl_lon, _dist = pos.frame_latlon(skyfield_ecliptic_frame)
+    return ecl_lon.degrees % 360.0
 
 
 def compute_astro(d):
-    """Compute astrology data for date d using PyEphem.
+    """Compute astrology data for date d using Skyfield.
 
     Returns a dict with:
       - 'planets': list of (name, symbol, sign_abbr, sign_sym, longitude, is_rx)
       - 'conjunctions': list of "Conj(body1+body2)" strings
       - 'rx_list': list of "Rx(symbol)" strings
     """
-    if not HAS_EPHEM:
+    if not HAS_SKYFIELD:
         return {"planets": [], "conjunctions": [], "rx_list": []}
 
     signs = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir",
@@ -1122,23 +1304,22 @@ def compute_astro(d):
     # Compute all planet positions
     longitudes = {}
     planet_data = []
-    for name, sym, cls in ASTRO_PLANETS:
-        p = cls()
-        lon = _planet_ecliptic_lon(p, d)
+    for name in ASTRO_PLANET_NAMES:
+        sym = ASTRO_PLANET_SYMBOLS[name]
+        lon = _planet_ecliptic_lon(name, d)
         longitudes[name] = lon
         sign_idx = int(lon / 30.0) % 12
         is_rx = False
         # Check retrograde: compare with tomorrow's longitude
         if name not in ("Sun", "Moon"):
-            p2 = cls()
             tomorrow = d + timedelta(days=1)
-            lon2 = _planet_ecliptic_lon(p2, tomorrow)
+            lon2 = _planet_ecliptic_lon(name, tomorrow)
             diff = lon2 - lon
             if diff > 180:
                 diff -= 360
             if diff < -180:
                 diff += 360
-            is_rx = diff < 0
+            is_rx = bool(diff < 0)
         planet_data.append({
             "name": name,
             "symbol": sym,
@@ -1158,9 +1339,8 @@ def compute_astro(d):
             if diff > 180:
                 diff = 360 - diff
             if diff < 1.5:
-                # Get symbols
-                s1 = next(s for nm, s, _ in ASTRO_PLANETS if nm == n1)
-                s2 = next(s for nm, s, _ in ASTRO_PLANETS if nm == n2)
+                s1 = ASTRO_PLANET_SYMBOLS[n1]
+                s2 = ASTRO_PLANET_SYMBOLS[n2]
                 conjunctions.append("Conj(" + s1 + s2 + ")")
 
     # Build retrograde list
@@ -1543,7 +1723,16 @@ def get_hebrew_month_lengths(hy):
 
 
 def compute_hebrew(d):
-    """Compute Hebrew calendar date for date d."""
+    """Compute Hebrew calendar date for date d using convertdate."""
+    if HAS_CONVERTDATE:
+        hy, hm, hd = convertdate.hebrew.from_gregorian(d.year, d.month, d.day)
+        # convertdate uses Nisan=1 numbering (civil year starts at Tishri but
+        # month numbering starts from Nisan). Map to our month names.
+        # convertdate.hebrew.MONTHS: ['Nisan','Iyyar','Sivan','Tammuz','Av','Elul',
+        #   'Tishri','Heshvan','Kislev','Teveth','Shevat','Adar','Adar Bet']
+        month_name = convertdate.hebrew.MONTHS[hm - 1]
+        return "Heb:" + str(hy) + " " + month_name + "/d" + str(hd)
+    # Fallback: manual implementation
     hy = None
     for y in range(5784, 5792):
         nyr = HEBREW_NEW_YEAR.get(y)
@@ -1586,12 +1775,25 @@ def compute_hebrew(d):
 # ============================================================
 
 def compute_mayan(d):
-    """Compute Mayan Tzolkin and Haab calendar dates.
-
-    Uses the GMT (Goodman-Martinez-Thompson) correlation: JD 584283 = 4 Ahau 8 Kumku.
-    Tzolkin: 260-day cycle (20 day names × 13 numbers)
-    Haab: 365-day cycle (18 months × 20 days + 5 Wayeb days)
-    """
+    """Compute Mayan Tzolkin and Haab calendar dates using convertdate."""
+    if HAS_CONVERTDATE:
+        jd = convertdate.julianday.from_gregorian(d.year, d.month, d.day)
+        tz_num, tz_name = convertdate.mayan.to_tzolkin(jd)
+        ha_day, ha_month = convertdate.mayan.to_haab(jd)
+        # Map convertdate transliterations to our standard names
+        TZ_MAP = {"Imix'": "Imix", "Ik'": "Ik", "Ak'b'al": "Akbal", "K'an": "Kan",
+                  "Chikchan": "Chicchan", "Kimi": "Cimi", "Manik'": "Manik",
+                  "Muluk": "Muluc", "Ok": "Oc", "Chuwen": "Chuen", "Eb'": "Eb",
+                  "B'en": "Ben", "K'ib'": "Cib", "Kab'an": "Caban",
+                  "Etz'nab'": "Etznab", "Kawak": "Cauac", "Ajaw": "Ahau"}
+        HAAB_MAP = {"Wo'": "Wo", "Sotz'": "Sotz", "Yaxk'in'": "Yaxkin",
+                    "Ch'en": "Chen", "Sak'": "Sak", "K'ank'in": "Kankin",
+                    "Muwan'": "Muwan", "K'ayab": "Kayab", "Kumk'u": "Kumku",
+                    "Wayeb'": "Wayeb"}
+        tz_name = TZ_MAP.get(tz_name, tz_name)
+        ha_month = HAAB_MAP.get(ha_month, ha_month)
+        return "May:" + str(tz_num) + tz_name + " " + str(ha_day) + ha_month
+    # Fallback: manual implementation using GMT correlation
     jd = to_julian_day(d)
     days_since_creation = jd - MAYAN_CORRELATION_JD
 
@@ -1671,12 +1873,21 @@ def compute_celtic_tree(d):
 # ============================================================
 
 def compute_islamic(d):
-    """Compute Islamic (Hijri) calendar date for date d.
-
-    Uses the arithmetic (tabular) Islamic calendar algorithm.
-    Months alternate 30/29 days, with 11 leap years in a 30-year cycle
-    having an extra day in the last month (Dhu al-Hijjah gets 30 instead of 29).
-    """
+    """Compute Islamic (Hijri) calendar date for date d using convertdate."""
+    if HAS_CONVERTDATE:
+        iy, im, id_ = convertdate.islamic.from_gregorian(d.year, d.month, d.day)
+        # Map convertdate's Arabic names to our ASCII names
+        ISLAMIC_MONTH_MAP = {
+            "al-Muḥarram": "Muharram", "Ṣafar": "Safar",
+            "Rabīʿ al-ʾAwwal": "RabiAlAwwal", "Rabīʿ ath-Thānī": "RabiAlThani",
+            "Jumādā al-ʾAwwal": "JumadaAlAwwal", "Jumādā ath-Thāniyah": "JumadaAlThani",
+            "Rajab": "Rajab", "Shaʿbān": "Shaban",
+            "Ramaḍān": "Ramadan", "Shawwāl": "Shawwal",
+            "Zū al-Qaʿdah": "DhuAlQidah", "Zū al-Ḥijjah": "DhuAlHijjah",
+        }
+        month_name = ISLAMIC_MONTH_MAP.get(convertdate.islamic.MONTHS[im - 1], convertdate.islamic.MONTHS[im - 1])
+        return "Isl:" + str(iy) + " " + month_name + "/d" + str(id_)
+    # Fallback: manual tabular Islamic calendar
     jd = to_julian_day(d)
 
     # Days since Islamic epoch
@@ -1817,11 +2028,12 @@ def persian_is_leap(pyear):
 
 
 def compute_persian(d):
-    """Compute Persian (Solar Hijri / Jalali) calendar date for date d.
-
-    Uses the 33-year intercalation cycle algorithm.
-    Months 1-6: 31 days, months 7-11: 30 days, month 12: 29/30 days.
-    """
+    """Compute Persian (Solar Hijri / Jalali) calendar date for date d using convertdate."""
+    if HAS_CONVERTDATE:
+        py, pm, pd_ = convertdate.persian.from_gregorian(d.year, d.month, d.day)
+        month_name = convertdate.persian.MONTHS[pm - 1]
+        return "Per:" + str(py) + " " + month_name + "/d" + str(pd_)
+    # Fallback: manual 33-year cycle algorithm
     jd = to_julian_day(d)
     days_since_epoch = jd - PERSIAN_EPOCH_JD
 
@@ -2936,7 +3148,22 @@ def _format_hours_human(hours, d, system="chaldean"):
     ruler = DAY_RULERS[wd]
     lines = []
     lines.append(f"{day_name}, {d} — Caraguatatuba ({system})")
-    lines.append(f"Day ruler: {ruler}")
+    if system == "tibetan" and hours and hours[0].get("nakshatra"):
+        lines.append(f"Day ruler: {ruler}  |  Nakshatra: {hours[0]['nakshatra']}")
+    elif system == "hellenistic":
+        # Hellenistic day ruler is the planet of the 1st hour after sunset
+        if hours:
+            sunset_ruler = hours[0]["planet"]
+            lines.append(f"Day ruler (sunset start): {sunset_ruler}")
+    elif system == "ethiopian":
+        coptic_epoch = date(284, 8, 29)
+        days_since_epoch = (d - coptic_epoch).days
+        coptic_weekday = days_since_epoch % 7
+        coptic_day_names = ["Sunday", "Monday", "Tuesday", "Wednesday",
+                            "Thursday", "Friday", "Saturday"]
+        lines.append(f"Day ruler: {ruler}  |  Coptic weekday: {coptic_day_names[coptic_weekday]}")
+    else:
+        lines.append(f"Day ruler: {ruler}")
     if hours:
         lines.append(f"Sunrise: {hours[0]['start']}  |  Sunset: {hours[11]['end']}")
     lines.append("")
@@ -2968,6 +3195,55 @@ def _format_hours_human(hours, d, system="chaldean"):
     return "\n".join(lines)
 
 
+def _format_hours_compare(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ):
+    """Format a compact comparison table of all planetary hour systems."""
+    from datetime import datetime, timedelta
+
+    sunrise, sunset = _sunrise_sunset(d, lat, lon, tz)
+    lines = []
+    day_name = WEEKDAY_NAMES[d.weekday()]
+    lines.append(f"{day_name}, {d} — Caraguatatuba")
+    lines.append(f"Sunrise: {sunrise.strftime('%H:%M')}  |  Sunset: {sunset.strftime('%H:%M')}")
+    lines.append("")
+    lines.append(f"{'System':<14} {'1st hour':<10} {'Day ruler':<20} {'Key difference'}")
+    lines.append(f"{'------':<14} {'--------':<10} {'---------':<20} {'--------------'}")
+
+    for sys_name in PLANETARY_HOUR_SYSTEMS:
+        hours = compute_planetary_hours(d, lat, lon, tz, sys_name)
+        if not hours:
+            continue
+        first_planet = hours[0]["planet"]
+        first_sym = hours[0]["symbol"]
+        first_str = f"{first_planet} {first_sym}"
+
+        if sys_name == "hellenistic":
+            ruler_str = f"{first_planet} (sunset start)"
+        elif sys_name == "tibetan":
+            naks = hours[0].get("nakshatra", "")
+            ruler_str = f"{DAY_RULERS[d.weekday()]} + {naks}"
+        elif sys_name == "ethiopian":
+            coptic_epoch = date(284, 8, 29)
+            days_since = (d - coptic_epoch).days
+            coptic_wd = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"][days_since % 7]
+            ruler_str = f"{DAY_RULERS[d.weekday()]} (Coptic: {coptic_wd})"
+        else:
+            ruler_str = DAY_RULERS[d.weekday()]
+
+        diff = {
+            "chaldean": "Night continues cycle",
+            "vedic": "Vedic planetary order",
+            "al-biruni": "Night restarts from ruler",
+            "egyptian": "36-decan cycle",
+            "hellenistic": "Day starts at sunset",
+            "tibetan": "Nakshatra-based ruler",
+            "ethiopian": "Coptic epoch week cycle",
+        }.get(sys_name, "")
+
+        lines.append(f"{sys_name:<14} {first_str:<10} {ruler_str:<20} {diff}")
+
+    return "\n".join(lines)
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -2995,22 +3271,21 @@ def main():
     parser.add_argument("-H", "--human", action="store_true", default=False,
                         help="Human-readable multi-line output (one labeled block per day)")
     parser.add_argument("--astro", action="store_true", default=False,
-                        help="Astrology mode: planetary zodiac signs, retrograde, conjunctions (requires ephem)")
+                        help="Astrology mode: planetary zodiac signs, retrograde, conjunctions (requires skyfield)")
     parser.add_argument("--systems", default=None,
                         help="Comma-separated calendar systems to include (e.g. vedic,mayan,hebrew). "
                              "Use 'all' for all systems. Implies --full output. "
                              "Available: 9sk,sex,alk,vedic,chinese,hebrew,mayan,celtic,islamic,aztec,"
                              "persian,egyptian,hindu,javanese,saka-india,saka-bali,decan,wavespell")
-    parser.add_argument("--hours", action="store_true", default=False,
-                        help="Output 24 planetary hours for today (or date range with --start/--end)")
+    parser.add_argument("--hours", default=None, nargs="?", const="all",
+                        choices=["all", "compare"] + PLANETARY_HOUR_SYSTEMS,
+                        help="Planetary hours: --hours (all 7), --hours chaldean, --hours compare, etc.")
     parser.add_argument("--lat", type=float, default=DEFAULT_LAT,
                         help=f"Latitude for sunrise/sunset (default: {DEFAULT_LAT})")
     parser.add_argument("--lon", type=float, default=DEFAULT_LON,
                         help=f"Longitude for sunrise/sunset (default: {DEFAULT_LON})")
     parser.add_argument("--tz", type=float, default=DEFAULT_TZ,
                         help=f"Timezone offset from UTC (default: {DEFAULT_TZ})")
-    parser.add_argument("--system", default="chaldean", choices=PLANETARY_HOUR_SYSTEMS,
-                        help="Planetary hour system: chaldean, vedic, al-biruni, or egyptian (default: chaldean)")
     args = parser.parse_args()
 
     # Parse --systems into a set
@@ -3032,12 +3307,12 @@ def main():
             args.full = True
 
     # Output modes are mutually exclusive
-    active_modes = [args.full, args.main_cycles, args.astro, args.hours]
+    active_modes = [args.full, args.main_cycles, args.astro, bool(args.hours)]
     if sum(active_modes) > 1:
         parser.error("--full, --main-cycles, --astro, and --hours are mutually exclusive")
 
-    if args.astro and not HAS_EPHEM:
-        parser.error("--astro requires the 'ephem' package: pip install ephem")
+    if args.astro and not HAS_SKYFIELD:
+        parser.error("--astro requires the 'skyfield' package: pip install skyfield")
 
     if args.today:
         today_str = date.today().isoformat()
@@ -3093,16 +3368,33 @@ def main():
 
         # --- Mode-specific parts ---
         if args.hours:
-            hours = compute_planetary_hours(current, args.lat, args.lon, args.tz, args.system)
-            if args.json:
-                json_results.append({
-                    "date": current.isoformat(),
-                    "system": args.system,
-                    "day_ruler": DAY_RULERS[current.weekday()],
-                    "hours": hours,
-                })
+            if args.hours == "compare":
+                out.write(_format_hours_compare(current, args.lat, args.lon, args.tz) + "\n")
+            elif args.hours == "all":
+                # Show all 7 systems
+                for sys_name in PLANETARY_HOUR_SYSTEMS:
+                    hours = compute_planetary_hours(current, args.lat, args.lon, args.tz, sys_name)
+                    if args.json:
+                        json_results.append({
+                            "date": current.isoformat(),
+                            "system": sys_name,
+                            "day_ruler": DAY_RULERS[current.weekday()],
+                            "hours": hours,
+                        })
+                    else:
+                        out.write(_format_hours_human(hours, current, sys_name) + "\n")
             else:
-                out.write(_format_hours_human(hours, current, args.system) + "\n")
+                # Specific system: --hours chaldean, --hours vedic, etc.
+                hours = compute_planetary_hours(current, args.lat, args.lon, args.tz, args.hours)
+                if args.json:
+                    json_results.append({
+                        "date": current.isoformat(),
+                        "system": args.hours,
+                        "day_ruler": DAY_RULERS[current.weekday()],
+                        "hours": hours,
+                    })
+                else:
+                    out.write(_format_hours_human(hours, current, args.hours) + "\n")
             current = current + timedelta(days=1)
             count = count + 1
             continue
