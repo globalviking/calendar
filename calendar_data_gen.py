@@ -16,6 +16,7 @@ import json
 import math
 import sys
 from datetime import date, timedelta
+from functools import lru_cache
 
 # Skyfield for accurate planetary positions (--astro mode) and sunrise/sunset (--hours mode)
 # Graceful fallback: if skyfield is not installed, --astro and --hours modes are disabled
@@ -734,6 +735,7 @@ def elem_emoji(element_name):
     return element_name
 
 
+@lru_cache(maxsize=None)
 def solar_longitude(d):
     """Compute the Sun's tropical longitude in degrees for date d.
 
@@ -783,6 +785,7 @@ def moon_sidereal_longitude(d):
     return (sun_sid + 13.176396 * days_since_ref) % 360.0
 
 
+@lru_cache(maxsize=None)
 def nearest_new_moon(d):
     """Find the most recent past new moon date for date d using Skyfield.
 
