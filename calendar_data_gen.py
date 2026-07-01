@@ -1567,12 +1567,8 @@ def compute_vedic(d):
     rashi_idx = int(sun_sidereal // 30.0) % 12
     rashi = VEDIC_SIGNS[rashi_idx]
 
-    # --- Lunar longitude (sidereal, approximate) ---
-    ref = nearest_new_moon(d)
-    days_since_ref = (d - ref).days
-    # At new moon, lunar longitude ≈ solar longitude
-    # Moon moves ~13.176 deg/day relative to the fixed stars
-    moon_sidereal = (sun_sidereal + 13.176396 * days_since_ref) % 360.0
+    # --- Lunar longitude (sidereal) ---
+    moon_sidereal = moon_sidereal_longitude(d)
 
     # Nakshatra: 27 mansions of 13.3333 degrees each
     nakshatra_idx = int(moon_sidereal / (360.0 / 27.0)) % 27
@@ -2197,10 +2193,8 @@ def compute_hindu(d):
     vs_month = HINDU_VS_MONTHS[month_idx]
 
     # --- Panchanga: Nakshatra & Tithi (reuse Vedic lunar model) ---
+    moon_sidereal = moon_sidereal_longitude(d)
     sun_sidereal = solar_sidereal_longitude(d)
-    ref = nearest_new_moon(d)
-    days_since_ref = (d - ref).days
-    moon_sidereal = (sun_sidereal + 13.176396 * days_since_ref) % 360.0
 
     nakshatra_idx = int(moon_sidereal / (360.0 / 27.0)) % 27
     nakshatra = HINDU_NAKSHATRAS[nakshatra_idx]
