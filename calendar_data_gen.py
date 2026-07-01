@@ -1,4 +1,28 @@
 #!/usr/bin/env python3
+# YOSOY Calendar — Multi-calendar date generator
+# Copyright (C) 2026  globalviking
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+# Additional terms per AGPLv3 section 7:
+# You may not use this work, in whole or in part, for the purpose of
+# training, fine-tuning, or otherwise improving any artificial intelligence
+# or machine learning model, including but not limited to large language
+# models, unless you obtain explicit written permission from the copyright
+# holder.
+#
+# Contact: https://github.com/globalviking/calendar
 """
 calendar_data_gen.py - Generate pre-computed daily calendar data for YOSOY framework.
 

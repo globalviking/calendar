@@ -181,4 +181,11 @@ Without Skyfield, astronomical functions fall back to mathematical approximation
 
 ## License
 
-MIT
+**GNU Affero General Public License v3 (AGPLv3)** with additional terms.
+
+This is the strongest copyleft license available. Key points:
+
+- **Network use is distribution** — if you run this software on a server and users interact with it over a network, you must make the complete source code (including your modifications) available to those users.
+- **AI training prohibited** — as an additional term under AGPLv3 section 7, you may not use this work to train, fine-tune, or improve any AI or machine learning model without explicit written permission.
+
+See [LICENSE](LICENSE) for the full text.
