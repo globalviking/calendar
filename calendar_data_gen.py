@@ -17,6 +17,7 @@ import math
 import sys
 from datetime import date, timedelta
 from functools import lru_cache
+import convertdate
 
 # Skyfield for accurate planetary positions (--astro mode) and sunrise/sunset (--hours mode)
 # Graceful fallback: if skyfield is not installed, --astro and --hours modes are disabled
@@ -429,12 +430,6 @@ MAYAN_TZOLKIN_NAMES = [
     "Cib", "Caban", "Etznab", "Cauac", "Ahau",
 ]
 
-# Haab: 18 months of 20 days + 5 Wayeb days
-MAYAN_HAAB_MONTHS = [
-    "Pop", "Wo", "Sip", "Sotz", "Sek", "Xul",
-    "Yaxkin", "Mol", "Chen", "Yax", "Sak", "Keh",
-    "Mak", "Kankin", "Muwan", "Pax", "Kayab", "Kumku",
-]
 # Wayeb is the 5-day unnamed period (month 19, days 0-4)
 
 # Mayan creation date: August 11, 3114 BCE (Gregorian)
@@ -554,13 +549,6 @@ GALACTIC_TONES = [
 # Islamic Hijri Calendar constants
 # ============================================================
 
-# Islamic month names
-ISLAMIC_MONTHS = [
-    "Muharram", "Safar", "RabiAlAwwal", "RabiAlThani",
-    "JumadaAlAwwal", "JumadaAlThani", "Rajab", "Shaban",
-    "Ramadan", "Shawwal", "DhuAlQidah", "DhuAlHijjah",
-]
-
 # Islamic epoch: July 16, 622 CE (Friday) — the Hijra
 # In Julian Day: 1948439 (astronomical/Thursday epoch) or 1948440 (Friday/civil)
 # We use the civil epoch (Friday) which is the most common: JD 1948440
@@ -624,12 +612,6 @@ AZTEC_NEW_YEAR = {
 # Persian (Solar Hijri / Jalali) Calendar constants
 # ============================================================
 
-# Persian month names (starts with Farvardin at spring equinox)
-PERSIAN_MONTHS = [
-    "Farvardin", "Ordibehesht", "Khordad", "Tir", "Mordad", "Shahrivar",
-    "Mehr", "Aban", "Azar", "Dey", "Bahman", "Esfand",
-]
-
 # Persian calendar epoch: March 19, 622 CE (Julian) = JD 1948320.5
 # Actually the Persian Solar Hijri epoch is March 22, 622 CE (Julian)
 # In terms of Julian Day: the epoch is JD 1948321 (March 22, 622 CE Julian)
@@ -647,9 +629,6 @@ PERSIAN_MONTHS = [
 
 # Persian epoch in Julian Day: March 22, 622 CE (Julian calendar)
 # = JD 1948320 (astronomical, starting at noon March 22)
-
-
-import convertdate
 
 
 def to_julian_day(d):
@@ -1828,8 +1807,6 @@ HINDU_VS_MONTHS = ["Chaitra", "Vaishakha", "Jyeshtha", "Ashadha",
                    "Shravana", "Bhadrapada", "Ashwin", "Kartika",
                    "Margashirsha", "Pausha", "Magha", "Phalguna"]
 
-HINDU_PAKSHA = ["Shukla", "Krishna"]
-
 # Nakshatras (27 lunar mansions) — same as Vedic section
 HINDU_NAKSHATRAS = [
     "Ashwini", "Bharani", "Krittika", "Rohini", "Mrigashira",
@@ -1920,9 +1897,6 @@ JAVANESE_MONTHS = ["Sura", "Sapar", "Mulud", "BakdaMulud", "JumadilAwal",
 # Anno Javanico epoch: 1555 CE (Javanese year = Gregorian year - 1555 for some traditions)
 # But commonly: AJ = Gregorian year - 1555, with new year around 1 Sura (approx late June/July)
 # For simplicity, we use a fixed correlation: AJ new year ~ July 1
-AJ_EPOCH_OFFSET = 1555
-
-# Approximate Anno Javanico new year (1 Sura) dates
 AJ_NEW_YEAR = {
     1953: date(2025, 6, 26),   # AJ 1953
     1954: date(2026, 7, 15),
