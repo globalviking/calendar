@@ -418,56 +418,7 @@ CHINESE_LEAP_MONTH_IDX = {
 }
 
 # ============================================================
-# Hebrew Calendar constants
-# ============================================================
-
-# Hebrew month names — civil year order (Tishrei = month 1)
-HEBREW_MONTHS = [
-    "Tishrei", "Cheshvan", "Kislev", "Tevet", "Shevat",
-    "Adar", "Nisan", "Iyar", "Sivan", "Tammuz",
-    "Av", "Elul",
-]
-HEBREW_LEAP_MONTHS = [
-    "Tishrei", "Cheshvan", "Kislev", "Tevet", "Shevat",
-    "AdarI", "AdarII", "Nisan", "Iyar", "Sivan", "Tammuz",
-    "Av", "Elul",
-]
-
-# Pre-computed Rosh Hashanah dates (verified from standard Hebrew calendar)
-HEBREW_NEW_YEAR = {
-    5784: date(2023, 9, 16),
-    5785: date(2024, 10, 3),
-    5786: date(2025, 10, 22),
-    5787: date(2026, 10, 11),
-    5788: date(2027, 10, 1),
-    5789: date(2028, 10, 21),
-    5790: date(2029, 10, 10),
-    5791: date(2030, 9, 28),
-}
-
-# Hebrew year lengths: 353/354/355 (common), 383/384/385 (leap)
-HEBREW_YEAR_LENGTHS = {
-    5784: 385,  # leap, complete
-    5785: 355,  # common, complete
-    5786: 354,  # common, regular
-    5787: 385,  # leap, complete
-    5788: 354,  # common, regular
-    5789: 385,  # leap, complete
-    5790: 355,  # common, complete
-}
-
-# Base month lengths (Cheshvan=2 and Kislev=3 vary by year type)
-HEBREW_COMMON_BASE = {
-    1: 30, 2: None, 3: None, 4: 29, 5: 30, 6: 29,
-    7: 30, 8: 29, 9: 30, 10: 29, 11: 30, 12: 29,
-}
-HEBREW_LEAP_BASE = {
-    1: 30, 2: None, 3: None, 4: 29, 5: 30, 6: 30, 7: 29,
-    8: 30, 9: 29, 10: 30, 11: 29, 12: 30, 13: 29,
-}
-
-# ============================================================
-# Mayan Calendar constants
+# Hindu / Vedic Panchangam constants
 # ============================================================
 
 # Tzolkin: 20 day names (in order, starting with Imix)
@@ -613,7 +564,6 @@ ISLAMIC_MONTHS = [
 # Islamic epoch: July 16, 622 CE (Friday) — the Hijra
 # In Julian Day: 1948439 (astronomical/Thursday epoch) or 1948440 (Friday/civil)
 # We use the civil epoch (Friday) which is the most common: JD 1948440
-ISLAMIC_EPOCH_JD = 1948440
 
 # ============================================================
 # Aztec Calendar constants
@@ -697,21 +647,10 @@ PERSIAN_MONTHS = [
 
 # Persian epoch in Julian Day: March 22, 622 CE (Julian calendar)
 # = JD 1948320 (astronomical, starting at noon March 22)
-PERSIAN_EPOCH_JD = 1948320
-
-# 33-year cycle: the first year of each 33-year cycle is a leap year
-# Leap years in a 33-year cycle: years 1, 5, 9, 13, 17, 22, 26, 30 (1-based)
-PERSIAN_LEAP_YEARS_IN_CYCLE = [1, 5, 9, 13, 17, 22, 26, 30]
-# Days in a 33-year cycle: 25*365 + 8*366 = 9125 + 2928 = 12053
 
 
-# Convertdate for authoritative calendar conversions (Hebrew, Islamic, Mayan, Persian)
-# Graceful fallback: if convertdate is not installed, use manual implementations
-try:
-    import convertdate
-    HAS_CONVERTDATE = True
-except ImportError:
-    HAS_CONVERTDATE = False
+import convertdate
+
 
 def to_julian_day(d):
     """Convert a Python date to Julian Day number (integer)."""
@@ -1665,158 +1604,34 @@ def compute_chinese_lunar(d):
 
 
 # ============================================================
-# Hebrew Calendar
-# ============================================================
-
-def hebrew_leap_year(hy):
-    """Check if a Hebrew year is a leap year (13 months)."""
-    cycle_pos = hy % 19
-    return cycle_pos in [0, 3, 6, 8, 11, 14, 17]
-
-
-def get_hebrew_month_lengths(hy):
-    """Return a list of (month_num, days, month_name) for Hebrew year hy."""
-    length = HEBREW_YEAR_LENGTHS.get(hy)
-    if length is None:
-        return []
-
-    is_leap = hebrew_leap_year(hy)
-    if is_leap:
-        month_names = HEBREW_LEAP_MONTHS
-        base = dict(HEBREW_LEAP_BASE)
-        num_months = 13
-    else:
-        month_names = HEBREW_MONTHS
-        base = dict(HEBREW_COMMON_BASE)
-        num_months = 12
-
-    # Determine Cheshvan and Kislev lengths from year type
-    if length == 383 or length == 353:
-        # deficient: Cheshvan=29, Kislev=29
-        base[2] = 29
-        base[3] = 29
-    elif length == 384 or length == 354:
-        # regular: Cheshvan=29, Kislev=30
-        base[2] = 29
-        base[3] = 30
-    elif length == 385 or length == 355:
-        # complete: Cheshvan=30, Kislev=30
-        base[2] = 30
-        base[3] = 30
-
-    result = []
-    for m in range(1, num_months + 1):
-        result.append((m, base[m], month_names[m - 1]))
-    return result
-
-
-def compute_hebrew(d):
-    """Compute Hebrew calendar date for date d using convertdate."""
-    if HAS_CONVERTDATE:
-        hy, hm, hd = convertdate.hebrew.from_gregorian(d.year, d.month, d.day)
-        # convertdate uses Nisan=1 numbering (civil year starts at Tishri but
-        # month numbering starts from Nisan). Map to our month names.
-        # convertdate.hebrew.MONTHS: ['Nisan','Iyyar','Sivan','Tammuz','Av','Elul',
-        #   'Tishri','Heshvan','Kislev','Teveth','Shevat','Adar','Adar Bet']
-        month_name = convertdate.hebrew.MONTHS[hm - 1]
-        return "Heb:" + str(hy) + " " + month_name + "/d" + str(hd)
-    # Fallback: manual implementation
-    hy = None
-    for y in range(5784, 5792):
-        nyr = HEBREW_NEW_YEAR.get(y)
-        next_yr = HEBREW_NEW_YEAR.get(y + 1)
-        if nyr is None:
-            continue
-        if next_yr is None:
-            next_yr = date(2030, 9, 28)
-        if nyr <= d < next_yr:
-            hy = y
-            break
-
-    if hy is None:
-        return "Heb:---"
-
-    nyr = HEBREW_NEW_YEAR[hy]
-    months = get_hebrew_month_lengths(hy)
-    if not months:
-        return "Heb:---"
-
-    day_of_year = (d - nyr).days + 1
-
-    remaining = day_of_year
-    month_name = ""
-    day_in_month = 0
-    for mn, mdays, mname in months:
-        if remaining <= mdays:
-            month_name = mname
-            day_in_month = remaining
-            break
-        remaining = remaining - mdays
-    else:
-        return "Heb:---"
-
-    return "Heb:" + str(hy) + " " + month_name + "/d" + str(day_in_month)
-
-
-# ============================================================
 # Mayan Calendar (Tzolkin & Haab)
 # ============================================================
 
+def compute_hebrew(d):
+    """Compute Hebrew calendar date for date d using convertdate."""
+    hy, hm, hd = convertdate.hebrew.from_gregorian(d.year, d.month, d.day)
+    month_name = convertdate.hebrew.MONTHS[hm - 1]
+    return "Heb:" + str(hy) + " " + month_name + "/d" + str(hd)
+
+
 def compute_mayan(d):
     """Compute Mayan Tzolkin and Haab calendar dates using convertdate."""
-    if HAS_CONVERTDATE:
-        jd = convertdate.julianday.from_gregorian(d.year, d.month, d.day)
-        tz_num, tz_name = convertdate.mayan.to_tzolkin(jd)
-        ha_day, ha_month = convertdate.mayan.to_haab(jd)
-        # Map convertdate transliterations to our standard names
-        TZ_MAP = {"Imix'": "Imix", "Ik'": "Ik", "Ak'b'al": "Akbal", "K'an": "Kan",
-                  "Chikchan": "Chicchan", "Kimi": "Cimi", "Manik'": "Manik",
-                  "Muluk": "Muluc", "Ok": "Oc", "Chuwen": "Chuen", "Eb'": "Eb",
-                  "B'en": "Ben", "K'ib'": "Cib", "Kab'an": "Caban",
-                  "Etz'nab'": "Etznab", "Kawak": "Cauac", "Ajaw": "Ahau"}
-        HAAB_MAP = {"Wo'": "Wo", "Sotz'": "Sotz", "Yaxk'in'": "Yaxkin",
-                    "Ch'en": "Chen", "Sak'": "Sak", "K'ank'in": "Kankin",
-                    "Muwan'": "Muwan", "K'ayab": "Kayab", "Kumk'u": "Kumku",
-                    "Wayeb'": "Wayeb"}
-        tz_name = TZ_MAP.get(tz_name, tz_name)
-        ha_month = HAAB_MAP.get(ha_month, ha_month)
-        return "May:" + str(tz_num) + tz_name + " " + str(ha_day) + ha_month
-    # Fallback: manual implementation using GMT correlation
-    jd = to_julian_day(d)
-    days_since_creation = jd - MAYAN_CORRELATION_JD
-
-    # Tzolkin: 260-day cycle
-    # Day 0 = 4 Ahau. Number cycle: (days_since_creation + 3) % 13 + 1 gives 1-13
-    # Actually: at JD 584283 (creation), Tzolkin day = 4 Ahau
-    # Tzolkin number = ((days_since_creation + 3) % 13) + 1  ... let's verify:
-    # days=0 -> (0+3)%13+1 = 4 ✓
-    # Tzolkin name index: Ahau is index 19. (days_since_creation + 19) % 20
-    # days=0 -> (0+19)%20 = 19 = Ahau ✓
-    tzolkin_num = ((days_since_creation + 3) % 13) + 1
-    tzolkin_name_idx = (days_since_creation + 19) % 20
-    tzolkin_name = MAYAN_TZOLKIN_NAMES[tzolkin_name_idx]
-
-    # Haab: 365-day cycle
-    # At creation (JD 584283), Haab date = 8 Kumku
-    # Kumku is month 17 (0-indexed), day 8
-    # Haab day number: (days_since_creation + 8) % 365 ... actually:
-    # The Haab day-of-year starts at 0 Pop = day 0 of the Haab year
-    # At creation: 8 Kumku = 17*20 + 8 = 348th day of Haab year
-    # So haab_day_of_year = (days_since_creation + 348) % 365
-    haab_day_of_year = (days_since_creation + 348) % 365
-
-    if haab_day_of_year < 360:
-        # Regular months: 18 × 20 = 360 days
-        haab_month_idx = haab_day_of_year // 20
-        haab_day = haab_day_of_year % 20
-        haab_month = MAYAN_HAAB_MONTHS[haab_month_idx]
-    else:
-        # Wayeb: 5 unnamed days (day 360-364)
-        wayeb_day = haab_day_of_year - 360
-        haab_month = "Wayeb"
-        haab_day = wayeb_day
-
-    return "May:" + str(tzolkin_num) + tzolkin_name + " " + str(haab_day) + haab_month
+    jd = convertdate.julianday.from_gregorian(d.year, d.month, d.day)
+    tz_num, tz_name = convertdate.mayan.to_tzolkin(jd)
+    ha_day, ha_month = convertdate.mayan.to_haab(jd)
+    # Map convertdate transliterations to our standard names
+    TZ_MAP = {"Imix'": "Imix", "Ik'": "Ik", "Ak'b'al": "Akbal", "K'an": "Kan",
+              "Chikchan": "Chicchan", "Kimi": "Cimi", "Manik'": "Manik",
+              "Muluk": "Muluc", "Ok": "Oc", "Chuwen": "Chuen", "Eb'": "Eb",
+              "B'en": "Ben", "K'ib'": "Cib", "Kab'an": "Caban",
+              "Etz'nab'": "Etznab", "Kawak": "Cauac", "Ajaw": "Ahau"}
+    HAAB_MAP = {"Wo'": "Wo", "Sotz'": "Sotz", "Yaxk'in'": "Yaxkin",
+                "Ch'en": "Chen", "Sak'": "Sak", "K'ank'in": "Kankin",
+                "Muwan'": "Muwan", "K'ayab": "Kayab", "Kumk'u": "Kumku",
+                "Wayeb'": "Wayeb"}
+    tz_name = TZ_MAP.get(tz_name, tz_name)
+    ha_month = HAAB_MAP.get(ha_month, ha_month)
+    return "May:" + str(tz_num) + tz_name + " " + str(ha_day) + ha_month
 
 
 # ============================================================
@@ -1862,82 +1677,18 @@ def compute_celtic_tree(d):
 
 def compute_islamic(d):
     """Compute Islamic (Hijri) calendar date for date d using convertdate."""
-    if HAS_CONVERTDATE:
-        iy, im, id_ = convertdate.islamic.from_gregorian(d.year, d.month, d.day)
-        # Map convertdate's Arabic names to our ASCII names
-        ISLAMIC_MONTH_MAP = {
-            "al-Muḥarram": "Muharram", "Ṣafar": "Safar",
-            "Rabīʿ al-ʾAwwal": "RabiAlAwwal", "Rabīʿ ath-Thānī": "RabiAlThani",
-            "Jumādā al-ʾAwwal": "JumadaAlAwwal", "Jumādā ath-Thāniyah": "JumadaAlThani",
-            "Rajab": "Rajab", "Shaʿbān": "Shaban",
-            "Ramaḍān": "Ramadan", "Shawwāl": "Shawwal",
-            "Zū al-Qaʿdah": "DhuAlQidah", "Zū al-Ḥijjah": "DhuAlHijjah",
-        }
-        month_name = ISLAMIC_MONTH_MAP.get(convertdate.islamic.MONTHS[im - 1], convertdate.islamic.MONTHS[im - 1])
-        return "Isl:" + str(iy) + " " + month_name + "/d" + str(id_)
-    # Fallback: manual tabular Islamic calendar
-    jd = to_julian_day(d)
-
-    # Days since Islamic epoch
-    days_since_epoch = jd - ISLAMIC_EPOCH_JD
-
-    # Number of complete lunar years elapsed
-    # A lunar year averages 354.367 days (12 × 29.53)
-    # In the tabular calendar: 30-year cycle has 10631 days
-    # (19 common years of 354 days + 11 leap years of 355 days)
-    # = 19*354 + 11*355 = 6726 + 3905 = 10631
-    # So cycles_elapsed = days_since_epoch // 10631
-    # remaining_days = days_since_epoch % 10631
-    # Then count years in the remaining days
-
-    cycles = days_since_epoch // 10631
-    remaining = days_since_epoch % 10631
-
-    # Count years within the current 30-year cycle
-    # Leap years in the cycle (0-indexed): 2, 5, 7, 10, 13, 16, 18, 21, 24, 26, 29
-    # (based on the most common tabular variant — type I)
-    ISLAMIC_LEAP_YEARS = [2, 5, 7, 10, 13, 16, 18, 21, 24, 26, 29]
-
-    year_in_cycle = 0
-    for y in range(30):
-        year_len = 355 if y in ISLAMIC_LEAP_YEARS else 354
-        if remaining < year_len:
-            year_in_cycle = y
-            break
-        remaining = remaining - year_len
-
-    hy = cycles * 30 + year_in_cycle + 1  # +1 because epoch is year 1
-
-    # Now 'remaining' is the day-of-year (0-based)
-    # Walk through the 12 months to find month and day
-    # Month lengths alternate: 30, 29, 30, 29, 30, 29, 30, 29, 30, 29, 30, 29 = 354
-    # In leap year, last month (12th) = 30 instead of 29 → 355
-    is_leap = year_in_cycle in ISLAMIC_LEAP_YEARS
-
-    day_of_year = remaining  # 0-based
-    month_num = 0
-    day_in_month = 0
-    for m in range(12):
-        if m % 2 == 0:
-            month_len = 30  # odd months (1st, 3rd, 5th, ...) have 30 days
-        else:
-            month_len = 29  # even months (2nd, 4th, 6th, ...) have 29 days
-        # Last month (m=11, DhuAlHijjah) gets 30 in leap years
-        if m == 11 and is_leap:
-            month_len = 30
-
-        if day_of_year < month_len:
-            month_num = m + 1
-            day_in_month = day_of_year + 1  # 1-based
-            break
-        day_of_year = day_of_year - month_len
-
-    if month_num == 0:
-        return "Isl:---"
-
-    month_name = ISLAMIC_MONTHS[month_num - 1]
-
-    return "Isl:" + str(hy) + " " + month_name + "/d" + str(day_in_month)
+    iy, im, id_ = convertdate.islamic.from_gregorian(d.year, d.month, d.day)
+    # Map convertdate's Arabic names to our ASCII names
+    ISLAMIC_MONTH_MAP = {
+        "al-Muḥarram": "Muharram", "Ṣafar": "Safar",
+        "Rabīʿ al-ʾAwwal": "RabiAlAwwal", "Rabīʿ ath-Thānī": "RabiAlThani",
+        "Jumādā al-ʾAwwal": "JumadaAlAwwal", "Jumādā ath-Thāniyah": "JumadaAlThani",
+        "Rajab": "Rajab", "Shaʿbān": "Shaban",
+        "Ramaḍān": "Ramadan", "Shawwāl": "Shawwal",
+        "Zū al-Qaʿdah": "DhuAlQidah", "Zū al-Ḥijjah": "DhuAlHijjah",
+    }
+    month_name = ISLAMIC_MONTH_MAP.get(convertdate.islamic.MONTHS[im - 1], convertdate.islamic.MONTHS[im - 1])
+    return "Isl:" + str(iy) + " " + month_name + "/d" + str(id_)
 
 
 # ============================================================
@@ -2007,68 +1758,11 @@ def compute_aztec(d):
 # Persian (Solar Hijri / Jalali) Calendar
 # ============================================================
 
-def persian_is_leap(pyear):
-    """Check if a Persian year is a leap year using the 33-year cycle."""
-    cycle_pos = pyear % 33
-    if cycle_pos == 0:
-        cycle_pos = 33
-    return cycle_pos in PERSIAN_LEAP_YEARS_IN_CYCLE
-
-
 def compute_persian(d):
     """Compute Persian (Solar Hijri / Jalali) calendar date for date d using convertdate."""
-    if HAS_CONVERTDATE:
-        py, pm, pd_ = convertdate.persian.from_gregorian(d.year, d.month, d.day)
-        month_name = convertdate.persian.MONTHS[pm - 1]
-        return "Per:" + str(py) + " " + month_name + "/d" + str(pd_)
-    # Fallback: manual 33-year cycle algorithm
-    jd = to_julian_day(d)
-    days_since_epoch = jd - PERSIAN_EPOCH_JD
-
-    if days_since_epoch < 0:
-        return "Per:---"
-
-    # Find the Persian year using 33-year cycles
-    # Each 33-year cycle has 12053 days (25*365 + 8*366)
-    cycles = days_since_epoch // 12053
-    remaining = days_since_epoch % 12053
-
-    # Count years within the current 33-year cycle
-    year_in_cycle = 0
-    for y in range(1, 34):
-        year_len = 366 if persian_is_leap(y) else 365
-        if remaining < year_len:
-            year_in_cycle = y
-            break
-        remaining = remaining - year_len
-
-    pyear = cycles * 33 + year_in_cycle
-
-    # Now 'remaining' is the day-of-year (0-based)
-    day_of_year = remaining
-
-    # Month lengths: 1-6 = 31 days, 7-11 = 30 days, 12 = 29 or 30 (leap)
-    is_leap = persian_is_leap(year_in_cycle)
-    month_lengths = [31, 31, 31, 31, 31, 31, 30, 30, 30, 30, 30, 29]
-    if is_leap:
-        month_lengths[11] = 30  # Esfand has 30 days in leap year
-
-    month_num = 0
-    day_in_month = 0
-    doy_remaining = day_of_year
-    for m in range(12):
-        if doy_remaining < month_lengths[m]:
-            month_num = m + 1
-            day_in_month = doy_remaining + 1  # 1-based
-            break
-        doy_remaining = doy_remaining - month_lengths[m]
-
-    if month_num == 0:
-        return "Per:---"
-
-    month_name = PERSIAN_MONTHS[month_num - 1]
-
-    return "Per:" + str(pyear) + " " + month_name + "/d" + str(day_in_month)
+    py, pm, pd_ = convertdate.persian.from_gregorian(d.year, d.month, d.day)
+    month_name = convertdate.persian.MONTHS[pm - 1]
+    return "Per:" + str(py) + " " + month_name + "/d" + str(pd_)
 
 
 # ============================================================
