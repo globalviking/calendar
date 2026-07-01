@@ -3339,19 +3339,6 @@ def main():
     current = start
     count = 0
     while current <= end:
-        # --- Common fields (always computed) ---
-        wd_field = compute_weekday(current)
-        atl_field, is_dot, const_or_elem = compute_atlantean(current)
-        zod = compute_zodiac(current, is_dot)
-        season = compute_season(current, args.hemisphere)
-        moon13 = compute_13moon(current)
-        moon_phase = compute_moon_phase(current)
-        moon_zod = compute_moon_zodiac(current)
-        moon_phase = moon_phase + " " + moon_zod
-
-        # --- Flags ---
-        flags, flags_field, alk_result = compute_flags(current, is_dot)
-
         # --- Mode-specific parts ---
         if args.hours:
             if args.hours == "compare":
@@ -3384,6 +3371,19 @@ def main():
             current = current + timedelta(days=1)
             count = count + 1
             continue
+
+        # --- Common fields (only for non-hours modes) ---
+        wd_field = compute_weekday(current)
+        atl_field, is_dot, const_or_elem = compute_atlantean(current)
+        zod = compute_zodiac(current, is_dot)
+        season = compute_season(current, args.hemisphere)
+        moon13 = compute_13moon(current)
+        moon_phase = compute_moon_phase(current)
+        moon_zod = compute_moon_zodiac(current)
+        moon_phase = moon_phase + " " + moon_zod
+
+        # --- Flags ---
+        flags, flags_field, alk_result = compute_flags(current, is_dot)
 
         full_data = None
         astro_data = None
