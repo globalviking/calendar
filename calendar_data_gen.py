@@ -1260,15 +1260,6 @@ def compute_planetary_hours(d, lat=DEFAULT_LAT, lon=DEFAULT_LON, tz=DEFAULT_TZ,
 ASTRO_PLANET_NAMES = [
     "Sun", "Moon", "Mercury", "Venus", "Mars", "Jupiter", "Saturn",
 ]
-ASTRO_PLANET_SYMBOLS = {
-    "Sun": "\u2609",
-    "Moon": "\u263d",
-    "Mercury": "\u263f",
-    "Venus": "\u2640",
-    "Mars": "\u2642",
-    "Jupiter": "\u2643",
-    "Saturn": "\u2644",
-}
 
 
 def _planet_ecliptic_lon(name, d):
@@ -1296,16 +1287,14 @@ def compute_astro(d):
     if not HAS_SKYFIELD:
         return {"planets": [], "conjunctions": [], "rx_list": []}
 
-    signs = ["Ari", "Tau", "Gem", "Can", "Leo", "Vir",
-             "Lib", "Sco", "Sag", "Cap", "Aqu", "Pis"]
-    syms = ["\u2648", "\u2649", "\u264a", "\u264b", "\u264c", "\u264d",
-            "\u264e", "\u264f", "\u2650", "\u2651", "\u2652", "\u2653"]
+    signs = MOON_ZODIAC_ABBR
+    syms = TROPICAL_ZODIAC_SYMBOLS
 
     # Compute all planet positions
     longitudes = {}
     planet_data = []
     for name in ASTRO_PLANET_NAMES:
-        sym = ASTRO_PLANET_SYMBOLS[name]
+        sym = PLANETARY_SYMBOLS[name]
         lon = _planet_ecliptic_lon(name, d)
         longitudes[name] = lon
         sign_idx = int(lon / 30.0) % 12
@@ -1339,8 +1328,8 @@ def compute_astro(d):
             if diff > 180:
                 diff = 360 - diff
             if diff < 1.5:
-                s1 = ASTRO_PLANET_SYMBOLS[n1]
-                s2 = ASTRO_PLANET_SYMBOLS[n2]
+                s1 = PLANETARY_SYMBOLS[n1]
+                s2 = PLANETARY_SYMBOLS[n2]
                 conjunctions.append("Conj(" + s1 + s2 + ")")
 
     # Build retrograde list
